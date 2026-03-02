@@ -25,7 +25,7 @@ Turing = "fce5fe82-541a-59a6-adf8-730c64b5f9a0"
 [compat]
 Accessors = "0.1.42"
 Distributions = "0.25.120"
-DynamicPPL = "0.36.12, 0.37, 0.38, 0.39"
+DynamicPPL = "0.36.12, 0.37, 0.38, 0.39, 0.40"
 FastGaussQuadrature = "1.1.0"
 ForwardDiff = "1.0.1"
 HistogramBinnings = "0.1.1"
