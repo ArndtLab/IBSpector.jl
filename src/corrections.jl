@@ -1,6 +1,6 @@
 function ramp(iter, mu, rho)
-    # min(mu/5 * iter, rho)
-    rho
+    min(mu/3 * iter, rho)
+    # rho
 end
 
 """
@@ -22,6 +22,8 @@ Return a named tuple which contains the fields:
 - `yth`: a vector of vectors of the expected weights, one for each model
 - `deltas`: a vector of vectors of the maximum absolute difference between
   corrections in consecutive iterations, and for each model.
+- `lls`: a vector of vectors of log-likelihoods, one for each iteration and
+  for each model. The output estimate is the one with the highest log-likelihood.
 - `conv`: a vector of booleans, one for each model, indicating whether the
   maximum iterations were reached (false) or whether the procedure 
   converged before (true).
@@ -35,7 +37,12 @@ Return a named tuple which contains the fields:
 - `iters::Int=20`: The number of iterations to perform. It might converge earlier
 - `reltol::Float64=1e-2`: The relative tolerance to use for convergence,
   i.e. the maximum absolute difference between corrections in consecutive iterations.
+  The convergence condition test this or `relchange`.
+- `relchange::Float64=1e-4`: The relative change in parameters to use for convergence.
+  This is the maximum relative change in parameters between consecutive iterations.
+  The convergence condition test this or `reltol`.
 - `corcut::Int=fop.locut-1`: The index of the last histogram bin to apply corrections to.
+  This should not be changed in most cases.
 """
 function demoinfer(segments::AbstractVector{<:Integer}, epochrange::AbstractRange{<:Integer}, mu::Float64, rho::Float64;
     fop::FitOptions = FitOptions(sum(segments), length(segments), mu, rho),
@@ -77,13 +84,13 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochrange::AbstractRange{<:Integer}
         h_mods = map(r->r.h_mod, results),
         yth = map(r->r.yth, results),
         deltas = map(r->r.deltas, results),
+        lls = map(r->r.lls, results),
         conv = map(r->r.conv, results)
     )
 end
 
 function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
-    iters::Int = 20, reltol::Float64 = 1e-2, corcut::Int = fop_.locut-1, 
-    finalize::Bool = false
+    iters::Int = 20, reltol::Float64 = 1e-2, relchange::Float64=1e-4, corcut::Int = fop_.locut-1
 ) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
     @assert !isempty(h_obs.weights) "histogram is empty"
     @assert epochs > 0 "epochrange has to be strictly positive"
@@ -97,11 +104,14 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     chain = []
     corrections = []
     deltas = [Inf]
+    lls = []
 
     h_mod.weights .= h_obs.weights
     corr = zeros(Float64, length(h_obs.weights))
     f = nothing
-    yth = nothing
+    ybest = zeros(length(rs))
+    llbest = -Inf
+    conv = false
     for iter in 1:iters
         fits = pre_fit!(fop, h_mod, epochs)
         f = fits[end]
@@ -115,8 +125,12 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         if iter > 1
             deltacorr = corrections[iter] .- corrections[iter-1]
             delta = maximum(abs.(deltacorr))
+            deltapars = maximum(
+                abs.((get_para(chain[end]) .- get_para(chain[end-1])) ./ get_para(chain[end-1]))
+            )
             push!(deltas, delta)
-            if delta < reltol
+            if delta < reltol || deltapars < relchange
+                conv = true
                 break
             end
         end
@@ -128,36 +142,37 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         h_mod.weights .= h_obs.weights
 
         yth = get_tmp(bag.ys, eltype(init))
-        corr = yth .* diff(h_obs.edges[1]) .- weightsnaive
+        wth = yth .* diff(h_obs.edges[1])
+        corr = wth .- weightsnaive
         corr[1:corcut] .= 0.
+        lim = findfirst(corr .> h_mod.weights)
+        if isnothing(lim)
+            lim = length(corr)
+        end
+        corr[lim:end] .= 0.
         temp = h_mod.weights .- corr
         temp .= round.(Int, temp)
         h_mod.weights .= max.(temp, 0)
         @assert all(isfinite, h_mod.weights)
         @assert all(!isnan, h_mod.weights)
-    end
 
-    conv = true
-    if length(chain) == iters
-        conv = false
-        if finalize
-            f = chain[argmin(deltas)]
-            setOptimOptions!(fop; maxiters = 600, maxtime = 10000)
-            setnaive!(fop, false)
-            setnepochs!(fop, epochs)
-            setinit!(fop, get_para(f))
-            f = fit_model_epochs!(fop, h_obs)
+        ll = llsmcp(wth, h_obs.weights, fop.locut)
+        push!(lls, ll)
+        if ll > llbest
+            ybest .= yth
+            llbest = ll
         end
     end
 
     (;
-        f,
+        f = chain[argmax(lls)],
         chain,
         corrections,
         h_obs,
         h_mod,
-        yth,
+        yth = ybest,
         deltas,
+        lls,
         conv
     )
 end
@@ -170,7 +185,7 @@ function correctestimate!(fop::FitOptions, fit::FitResult, h::Histogram)
     setinit!(fop, fit.para)
 
     he = ForwardDiff.hessian(
-        tn -> llsmcp!(bag, rs, h.edges[1].edges, h.weights, fop.mu, fop.rho, fop.locut, tn),
+        tn -> -llsmcp!(bag, rs, h.edges[1].edges, h.weights, fop.mu, fop.rho, fop.locut, tn),
         get_para(fit)
     )
     return getFitResult(he, fit.para, fit.lp, fit.opt.optim_result, fop, h.weights, true)
