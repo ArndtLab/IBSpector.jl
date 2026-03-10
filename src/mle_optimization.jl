@@ -8,7 +8,7 @@ end
     counts::AbstractVector{<:Integer}, mu::Float64, locut::Int,
     TNdists::Vector{<:Distribution}
 )
-    TN ~ arraydist(TNdists)
+    TN ~ product_distribution(TNdists)
     a = 0.5
     last_hid_I = laplacekingmanint(edges[locut] - a, mu, TN)
     for i in locut:length(counts)
@@ -31,7 +31,7 @@ end
     edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer},
     mu::Float64, rho::Float64, locut::Int, TNdists::Vector{<:Distribution}
 )
-    TN ~ arraydist(TNdists)
+    TN ~ product_distribution(TNdists)
     mldsmcp!(dc, 1:dc.order, rs, edges, mu, rho, TN)
     m = get_tmp(dc.ys, eltype(TN))
     m .*= diff(edges)
@@ -91,12 +91,13 @@ function fit_model_epochs!(
 )
     # get a good initial guess
     iszero(options.init) && initialize!(options, counts)
+    pars_ = InitFromParams(VarNamedTuple(; TN = options.init))
 
     model = model_epochs(edges, counts, options.mu, options.locut, options.prior)
     logger = ConsoleLogger(stdout, Logging.Error)
     mle = with_logger(logger) do
         Turing.Optimisation.estimate_mode(
-            model, MLE(), options.solver; initial_params=options.init, options.opt...
+            model, MLE(), options.solver; initial_params=pars_, options.opt...
         )
     end
     return getFitResult(mle, options, counts; stats)
@@ -110,6 +111,7 @@ function fit_model_epochs!(
 
     # get a good initial guess
     iszero(options.init) && initialize!(options, counts)
+    pars_ = InitFromParams(VarNamedTuple(; TN = options.init))
 
     # run the optimization
     rs = midpoints(edges)
@@ -118,14 +120,14 @@ function fit_model_epochs!(
     logger = ConsoleLogger(stdout, Logging.Error)
     mle = with_logger(logger) do
         Turing.Optimisation.estimate_mode(
-            model, MLE(), options.solver; initial_params=options.init, options.opt...
+            model, MLE(), options.solver; initial_params=pars_, options.opt...
         )
     end
     return getFitResult(mle, options, counts; stats)
 end
 
 function getFitResult(mle, options::FitOptions, counts; stats = true)
-    para = mle.values
+    para = mle.params[@varname(TN)]
     lp = mle.lp
     
     if stats
@@ -235,15 +237,15 @@ function sample_model_epochs!(
     model = model_epochs(edges, counts, options.mu, options.locut, options.prior)
     logger = ConsoleLogger(stdout, Logging.Error)
     if findmode
+        init_ = InitFromParams(VarNamedTuple(; TN = options.init))
         mle = with_logger(logger) do
             Turing.Optimisation.estimate_mode(
-                model, MLE(), options.solver; initial_params=options.init, options.opt...
+                model, MLE(), options.solver; initial_params=init_, options.opt...
             )
         end
-        setinit!(options, mle.values)
+        setinit!(options, mle.params[@varname(TN)])
     end
-    pars_ = Dict(DynamicPPL.VarName{:TN}() => options.init)
-    init_ = InitFromParams(pars_)
+    init_ = InitFromParams(VarNamedTuple(; TN = options.init))
     chain = with_logger(logger) do
         sample(model, NUTS(), nsamples; initial_params=init_)
     end
