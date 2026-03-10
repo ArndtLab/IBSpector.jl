@@ -53,21 +53,26 @@ function llsmcp!(dc::IntegralArrays, rs::AbstractVector{<:Real},
     mu::Float64, rho::Float64, locut::Int, TN::AbstractVector{<:Real}
 )
     mldsmcp!(dc, 1:dc.order, rs, edges, mu, rho, TN)
-    m = get_tmp(dc.ys, eltype(TN))
-    m .*= diff(edges)
+    ws = get_tmp(dc.ys, eltype(TN)) .* diff(edges)
+    return llsmcp(ws, counts, locut)
+end
+
+function llsmcp(ws::AbstractVector{<:Real}, counts::AbstractVector{<:Integer},
+    locut::Int
+)
     ll = 0
     for i in locut:length(counts)
-        if (m[i] < 0) || isnan(m[i])
+        if (ws[i] < 0) || isnan(ws[i])
             # this happens when evaluating the model
             # after optimization, in the unconstrained
             # space, using Bijectors.
             # I could not find a mwe, (TODO: find one)
             # probably out of domain, apply a penalty
-            m[i] = 0
+            ws[i] = 0
         end
-        @inbounds ll += logpdf(Poisson(m[i]),counts[i])
+        @inbounds ll += logpdf(Poisson(ws[i]),counts[i])
     end
-    return -ll
+    return ll
 end
 
 # --- fitting
