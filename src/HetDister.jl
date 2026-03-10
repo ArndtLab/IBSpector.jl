@@ -100,7 +100,7 @@ function residstructure(residuals::AbstractVector{<:Real};
 )
     ps = ones(length(residuals)-frame)
     for i in eachindex(ps)
-        c = cor(residuals[i+1:i+frame],residuals[i:i+frame-1])
+        c = cor(view(residuals, i+1:i+frame), view(residuals, i:i+frame-1))
         t = c * sqrt((frame - 2)/(1-c^2))
         p = StatsAPI.pvalue(Distributions.TDist(frame - 2), t; tail=:right)
         ps[i] = p
