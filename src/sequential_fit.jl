@@ -1,5 +1,5 @@
 function tcondr(r::Number, mu::Number)
-    return [1 / (mu * r), 1 / (mu * (25r)^(1/1.3))]
+    return 1 / (mu * r)
 end
 
 function timesplitter(h::Histogram, prev_para::Vector{T}, fop::FitOptions;
@@ -17,7 +17,7 @@ function timesplitter(h::Histogram, prev_para::Vector{T}, fop::FitOptions;
         while z < length(residuals) && residuals[j] * residuals[z] > 0
             z += 1
         end
-        if z - j >= frame
+        if z - j >= frame || (j == fop.locut) || (z == length(residuals))
             t1 = tcondr(r[j], fop.mu)
             t2 = tcondr(r[z], fop.mu)
             @debug "identified deviation " r[j] r[z]
@@ -121,6 +121,7 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
                 end
             end
             filter!(t->t!=0, ts)
+            push!(ts, 15.0)
             sort!(ts)
             unique!(ts)
             maxnts_ = min(fop.maxnts, length(ts))
@@ -141,7 +142,7 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
             f = fs[argmax(lps)]
             @debug "best " ts[argmax(lps)] f.lp f.converged
             f = perturb_fit!(f, fop, h; by_pass=true)
-            setinit!(fop, get_para(f))
+            setinit!(fop, get_para(f)*0.999)
             f = fit_model_epochs!(fop, h)
             @assert all(!isnan, f.para) """
                 NaN parameters $(f.para)
