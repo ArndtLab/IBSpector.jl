@@ -22,7 +22,7 @@ include("corrections.jl")
 
 export pre_fit!, demoinfer, compare_models, sample_model_epochs!,
     correctestimate!,
-    get_para, evd, sds, pop_sizes, durations, get_covar,
+    get_para, evd, loglike, sds, pop_sizes, durations, times, get_covar, flags,
     compute_residuals,
     adapt_histogram,
     FitResult, FitOptions,
@@ -45,11 +45,11 @@ function integral_ws(edges::AbstractVector{<:Real}, mu::Float64, TN::Vector)
 end
 
 """
-    compute_residuals(h::Histogram, mu, rho, TN::Vector; naive=false)
+    compute_residuals(h::Histogram, mu, rho, TN::Vector; naive=true)
 
 Compute the residuals between the observed and expected weights.
 ## Optional arguments
-- `naive::Bool=false`: if true the expected weights are computed
+- `naive::Bool=true`: if true the expected weights are computed
   using the closed form integral, otherwise using higher order transition
   probabilities from SMC' theory.
 - `order::Int=10`: maximum number of higher order corrections to use
@@ -58,7 +58,7 @@ Compute the residuals between the observed and expected weights.
 - `ndt::Int=800`: number of Legendre nodes to use when `naive` is false.
 """
 function compute_residuals(h::Histogram, mu::Float64, rho::Float64, TN::Vector; 
-    naive=false, order=10, ndt=800
+    naive=true, order=10, ndt=800
 )
     if naive
         w_th = integral_ws(h.edges[1], mu, TN)
@@ -68,6 +68,18 @@ function compute_residuals(h::Histogram, mu::Float64, rho::Float64, TN::Vector;
         mldsmcp!(bag, 1:bag.order, rs, h.edges[1].edges, mu, rho, TN)
         w_th = get_tmp(bag.ys, eltype(TN)) .* diff(h.edges[1])
     end
+    residuals = (h.weights .- w_th) ./ sqrt.(w_th)
+    @assert all(isfinite.(residuals))
+    return residuals
+end
+
+"""
+    compute_residuals(h::Histogram, yth::AbstractVector{<:Real})
+
+Compute the residuals between the observed and expected weights.
+"""
+function compute_residuals(h::Histogram, yth::AbstractVector{<:Real})
+    w_th = yth .* diff(h.edges[1])
     residuals = (h.weights .- w_th) ./ sqrt.(w_th)
     @assert all(isfinite.(residuals))
     return residuals
@@ -90,22 +102,22 @@ function compute_residuals(h1::Histogram, h2::Histogram; fc1 = 1.0, fc2 = 1.0)
 end
 
 """
-    residstructure(residuals::AbstractVector{<:Real}; frame::Int = length(residuals)÷20)
+    residstructure(residuals::AbstractVector{<:Real})
 
-Compute the p-values for the correlation between adjacent residuals in a sliding window of size `frame`.
+Compute the p-value for the autocorrelation of adjacent residuals.
 The p-value is the right tail of the t-distribution.
 """
-function residstructure(residuals::AbstractVector{<:Real};
-    frame::Int = length(residuals)÷20
-)
-    ps = ones(length(residuals)-frame)
-    for i in eachindex(ps)
-        c = cor(view(residuals, i+1:i+frame), view(residuals, i:i+frame-1))
-        t = c * sqrt((frame - 2)/(1-c^2))
-        p = StatsAPI.pvalue(Distributions.TDist(frame - 2), t; tail=:right)
-        ps[i] = p
+function residstructure(residuals::AbstractVector{<:Real})
+    l = length(residuals)
+    if l % 2 == 1
+        l -= 1
     end
-    ps
+    x1 = 1:2:l-1
+    x2 = 2:2:l
+    c = cor(view(residuals, x1), view(residuals, x2))
+    t = c * sqrt((l÷2 - 2)/(1-c^2))
+    p = StatsAPI.pvalue(Distributions.TDist(l÷2 - 2), t; tail=:right)
+    return p
 end
 
 function CustomEdgeVector(; lo = 1, hi = 10, nbins::Integer)

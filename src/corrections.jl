@@ -20,6 +20,8 @@ Return a named tuple which contains the fields:
 - `h_mods`: a vector of modified histograms, one for each model, with
   higher order corrections applied.
 - `yth`: a vector of vectors of the expected weights, one for each model
+- `resid`: a vector of vectors of residuals, one for each model
+- `p`: a vector of right-tail p-values for the autocorrelation of residuals, one for each model
 - `deltas`: a vector of vectors of the maximum absolute difference between
   corrections in consecutive iterations, and for each model.
 - `lls`: a vector of vectors of log-likelihoods, one for each iteration and
@@ -83,6 +85,8 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochrange::AbstractRange{<:Integer}
         h_obs = results[1].h_obs,
         h_mods = map(r->r.h_mod, results),
         yth = map(r->r.yth, results),
+        resid = map(r->r.resid, results),
+        p = map(r->r.p, results),
         deltas = map(r->r.deltas, results),
         lls = map(r->r.lls, results),
         conv = map(r->r.conv, results)
@@ -164,6 +168,9 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         end
     end
 
+    resid = compute_residuals(h_obs, ybest)
+    p = residstructure(resid)
+
     (;
         f = chain[argmax(lls)],
         chain,
@@ -171,6 +178,8 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         h_obs,
         h_mod,
         yth = ybest,
+        resid,
+        p,
         deltas,
         lls,
         conv
