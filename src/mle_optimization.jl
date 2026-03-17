@@ -27,6 +27,30 @@ end
     end
 end
 
+# unused
+@model function model_corrected(edges::AbstractVector{<:Integer}, 
+    counts::AbstractVector{<:Integer}, mu::Float64, rate::Float64, locut::Int,
+    TNdists::Vector{<:Distribution}, corrections::AbstractVector{<:Real}
+)
+    TN ~ product_distribution(TNdists)
+    a = 0.5
+    last_hid_I = firstorderint(edges[locut] - a, rate, TN) * 2 * mu^2 * TN[1] / rate
+    for i in locut:length(counts)
+        @inbounds this_hid_I = firstorderint(edges[i+1] - a, rate, TN) * 2 * mu^2 * TN[1] / rate
+        m = this_hid_I - last_hid_I
+        last_hid_I = this_hid_I
+        if (m < 0) || isnan(m)
+            # this happens when evaluating the model
+            # after optimization, in the unconstrained
+            # space, using Bijectors.
+            # I could not find a mwe, (TODO: find one)
+            # probably out of domain, apply a penalty
+            m = 0
+        end
+        @inbounds counts[i] ~ Poisson(m + corrections[i])
+    end
+end
+
 @model function modelsmcp!(dc::IntegralArrays, rs::AbstractVector{<:Real}, 
     edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer},
     mu::Float64, rho::Float64, locut::Int, TNdists::Vector{<:Distribution}
@@ -103,6 +127,7 @@ function fit_model_epochs!(
     return getFitResult(mle, options, counts; stats)
 end
 
+# unused
 function fit_model_epochs!(
     options::FitOptions, edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer}, 
     ::Val{false};
@@ -204,50 +229,61 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
 end
 
 """
-    sample_model_epochs!(options::FitOptions, h::Histogram{T,1,E}, init::AbstractVector{<:Real}; nsamples = 10_000, findmode = false)
+    sample_model_epochs(options::FitOptions, h::Histogram{T,1,E}, fit::FitResult; nsamples = 10_000, naive = isnaive(options))
 
 Sample `nsamples` from the posterior distribution of the parameters, starting
-from initial point `init`.
+from initial point in MLE `fit` obtained from [`demoinfer`](@ref).
 
 Requires the observed histogram `h` and the fit options `options`.
 Return a `Chains` object from the `MCMCDiagnostics` module of `Turing`,
 which contains the samples from the posterior distribution.
-If `findmode` is true, the function will first find the mode of the
-posterior distribution using optimization, and then use that as the
-initial point for sampling. Otherwise, it will use the provided
-`init` as the initial point for sampling.
+If `naive` is false, the sampling will be done using the SMC' likelihood, which is more accurate but
+also more computationally intensive. If `naive` is true, the sampling will
+be done using the closed-form integral likelihood, which requires to use a
+modified histogram `h_mod` as output by [`demoinfer`](@ref).
 """
-function sample_model_epochs!(options::FitOptions, h::Histogram{T,1,E}, 
-    init::AbstractVector{<:Real}; nsamples::Int=10_000, findmode = false
+function sample_model_epochs(options::FitOptions, h::Histogram{T,1,E}, 
+    fit::FitResult; nsamples::Int=10_000, naive = isnaive(options)
 ) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
-    @assert length(init)%2 == 0 "initial parameters should be of length 2*nepochs"
-    setnepochs!(options, length(init)÷2)
-    setinit!(options, init)
-    sample_model_epochs!(options, h.edges[1], h.weights, Val(isnaive(options)); nsamples, findmode)
+    options_ = deepcopy(options)
+    setnepochs!(options_, fit.nepochs)
+    setnaive!(options_, naive)
+    sample_model_epochs!(options_, fit, h.edges[1], h.weights, Val(isnaive(options_)); nsamples)
 end
 
 function sample_model_epochs!(
-    options::FitOptions, edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer},
+    options::FitOptions, fit::FitResult, edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer},
     ::Val{true};
-    nsamples::Int=10_000, findmode = false
+    nsamples::Int=10_000
 )
-    # get a good initial guess
-    iszero(options.init) && initialize!(options, counts)
+    setinit!(options, get_para(fit))
 
     model = model_epochs(edges, counts, options.mu, options.locut, options.prior)
     logger = ConsoleLogger(stdout, Logging.Error)
-    if findmode
-        init_ = InitFromParams(VarNamedTuple(; TN = options.init))
-        mle = with_logger(logger) do
-            Turing.Optimisation.estimate_mode(
-                model, MLE(), options.solver; initial_params=init_, options.opt...
-            )
-        end
-        setinit!(options, mle.params[@varname(TN)])
-    end
+    
     init_ = InitFromParams(VarNamedTuple(; TN = options.init))
     chain = with_logger(logger) do
         sample(model, NUTS(), nsamples; initial_params=init_)
+    end
+    return chain
+end
+
+function sample_model_epochs!(
+    options::FitOptions, fit::FitResult, edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer},
+    ::Val{false};
+    nsamples::Int=10_000
+)
+    setinit!(options, get_para(fit))
+    covar = get_covar(fit)
+
+    logger = ConsoleLogger(stdout, Logging.Error)
+    
+    init_ = InitFromParams(VarNamedTuple(; TN = options.init))
+    rs = midpoints(edges)
+    dc = IntegralArrays(options.order, options.ndt, length(rs), Val{length(options.init)}, 3)
+    model = modelsmcp!(dc, rs, edges, counts, options.mu, options.rho, options.locut, options.prior)
+    chain = with_logger(logger) do
+        sample(model, MH(covar), nsamples; initial_params=init_)
     end
     return chain
 end
