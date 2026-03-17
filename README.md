@@ -8,5 +8,3 @@
 A module to infer the effective population size history from the IBS tracts lengths distribution of a diploid genome.
 See the docs for a demo of how to use it.
 The method is published at ...
-
-You can have a look at the companion package [DemoPlots.jl](https://github.com/ArndtLab/DemoPlots.jl) for plotting utilities.

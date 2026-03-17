@@ -131,6 +131,7 @@ end
     @test !isnothing(best)
     @test !any(best.opt.at_lboundary)
     @test !any(best.opt.at_uboundary[2:end])
+    covar = get_covar(best)
     fcor = correctestimate!(fop, best, h)
     chain = sample_model_epochs!(fop, h, get_para(best); nsamples = 10, findmode = true)
     fl = flags(best)

@@ -20,12 +20,11 @@ include("mle_optimization.jl")
 include("sequential_fit.jl")
 include("corrections.jl")
 
-export pre_fit!, demoinfer, compare_models, sample_model_epochs!,
+export pre_fit!, demoinfer, compare_models, sample_model_epochs,
     correctestimate!,
     get_para, evd, loglike, sds, pop_sizes, durations, times, get_covar, flags,
-    compute_residuals,
     adapt_histogram,
-    FitResult, FitOptions,
+    FitResult, FitOptions, setOptimOptions!,
     laplacekingman, mldsmcp,
     extbps,
     lineages, cumulative_lineages, crediblehistory,
