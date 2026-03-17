@@ -1,5 +1,5 @@
 function ramp(iter, mu, rho)
-    min(mu/3 * iter, rho)
+    min(mu/10 * iter, rho)
     # rho
 end
 
@@ -36,7 +36,8 @@ Return a named tuple which contains the fields:
 - `lo::Int=1`: The lowest segment length to be considered in the histogram
 - `hi::Int=50_000_000`: The highest segment length to be considered in the histogram
 - `nbins::Int=fop.ndt`: The number of bins to use in the histogram
-- `iters::Int=20`: The number of iterations to perform. It might converge earlier
+- `iters::Int=20`: The number of iterations to perform after warmup. It might converge earlier.
+  Warmup iterations are proportional to the `rho`/`mu` ratio.
 - `reltol::Float64=1e-2`: The relative tolerance to use for convergence,
   i.e. the maximum absolute difference between corrections in consecutive iterations.
   The convergence condition test this or `relchange`.
@@ -116,7 +117,8 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     ybest = zeros(length(rs))
     llbest = -Inf
     conv = false
-    for iter in 1:iters
+    warmup = findfirst(x -> fop.rho <= ramp(x, fop.mu, fop.rho), 1:100)
+    for iter in 1:iters+warmup
         fits = pre_fit!(fop, h_mod, epochs)
         f = fits[end]
         if f.nepochs != epochs
@@ -169,7 +171,7 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     end
 
     resid = compute_residuals(h_obs, ybest)
-    p = residstructure(resid)
+    p = residstructure(resid[fop.locut:end])
 
     (;
         f = chain[argmax(lls)],
