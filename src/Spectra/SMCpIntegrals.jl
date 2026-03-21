@@ -204,7 +204,7 @@ function prordn!(res::AbstractMatrix{<:Real}, jprt::AbstractMatrix{<:Real},
                     s += temp[k,j] * exp(-2rate * (rs[i]-edges[k+1]) * ts[j]) * (- expm1(-2rate * w * ts[j])) / 2ts[j]
                 end
                 w = edges[i+1] - edges[i]
-                if w < 1
+                if w <= 1
                     s += temp[i,j] * (- expm1(-2rate * w * ts[j])) / 2ts[j]
                 else
                     w = rs[i] - edges[i]
