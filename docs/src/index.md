@@ -1,10 +1,10 @@
 ```@meta
-CurrentModule = HetDister
+CurrentModule = IBSpector
 ```
 
-# HetDister
+# IBSpector
 
-Documentation for [HetDister](https://github.com/ArndtLab/HetDister.jl).
+Documentation for [IBSpector](https://github.com/ArndtLab/IBSpector.jl).
 
 Module to run demographic inference on diploid genomes, under the assumption of panmixia.
 
@@ -21,5 +21,5 @@ The output is a vector of parameters in the form `[L, N0, T1, N1, T2, N2, ...]` 
 ```
 
 ```@autodocs
-Modules = [HetDister, HetDister.Spectra]
+Modules = [IBSpector, IBSpector.Spectra]
 ```

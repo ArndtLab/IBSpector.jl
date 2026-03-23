@@ -30,7 +30,7 @@ in the tail have a skewed distribution of residuals, but the others
 should closely follow a standard normal.
 We can also assess the correlation structure of neighboring residuals
 ```julia
-ps = HetDister.residstructure(resid)
+ps = IBSpector.residstructure(resid)
 ```
 This function return a vector of right tail p values from t-tests for
 correlation of neighbouring residuals (see the function doc).

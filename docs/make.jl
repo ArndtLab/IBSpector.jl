@@ -1,14 +1,14 @@
-using HetDister
+using IBSpector
 using Documenter
 
-DocMeta.setdocmeta!(HetDister, :DocTestSetup, :(using HetDister); recursive=true)
+DocMeta.setdocmeta!(IBSpector, :DocTestSetup, :(using IBSpector); recursive=true)
 
 makedocs(;
-    modules=[HetDister],
+    modules=[IBSpector],
     authors="Tommaso Stentella <stentell@molgen.mpg.de> and contributors",
-    sitename="HetDister.jl",
+    sitename="IBSpector.jl",
     format=Documenter.HTML(;
-        canonical="https://ArndtLab.github.io/HetDister.jl",
+        canonical="https://ArndtLab.github.io/IBSpector.jl",
         edit_link="main",
         assets=String[],
     ),
@@ -21,7 +21,7 @@ makedocs(;
 )
 
 deploydocs(;
-    repo="github.com/ArndtLab/HetDister.jl",
+    repo="github.com/ArndtLab/IBSpector.jl",
     devbranch="main",
     versions=["stable" => "v^", "v#.#"],
 )

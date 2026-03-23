@@ -1,2 +1,2 @@
 using Aqua
-Aqua.test_all(HetDister)
+Aqua.test_all(IBSpector)

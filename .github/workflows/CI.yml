@@ -74,6 +74,6 @@ jobs:
         shell: julia --project=docs --color=yes {0}
         run: |
           using Documenter: DocMeta, doctest
-          using HetDister
-          DocMeta.setdocmeta!(HetDister, :DocTestSetup, :(using HetDister); recursive=true)
-          doctest(HetDister)
+          using IBSpector
+          DocMeta.setdocmeta!(IBSpector, :DocTestSetup, :(using IBSpector); recursive=true)
+          doctest(IBSpector)

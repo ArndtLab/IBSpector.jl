@@ -1,6 +1,6 @@
-using HetDister.Spectra
-using HetDister.Spectra.PreallocationTools
-using HetDister.Spectra.SMCpIntegrals: Nt, cumcr, pt, ptt
+using IBSpector.Spectra
+using IBSpector.Spectra.PreallocationTools
+using IBSpector.Spectra.SMCpIntegrals: Nt, cumcr, pt, ptt
 using Test
 
 include("mathematica-derived.jl")

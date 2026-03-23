@@ -1,4 +1,4 @@
-module HetDister
+module IBSpector
 
 using StatsBase, Distributions, HistogramBinnings
 using LinearAlgebra, Statistics

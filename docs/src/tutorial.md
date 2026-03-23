@@ -11,11 +11,11 @@ using Pkg; Pkg.activate(".")
 Pkg.Registry.add(RegistrySpec(url = "https://github.com/ArndtLab/JuliaRegistry.git"))
 ```
 ```julia
-Pkg.add("HetDister","HistogramBinnings","CSV","DataFrames","DataFramesMeta")
+Pkg.add("IBSpector","HistogramBinnings","CSV","DataFrames","DataFramesMeta")
 ```
 You can now load the installed packages:
 ```julia
-using HetDister, HistogramBinnings, CSV, DataFrames, DataFramesMeta
+using IBSpector, HistogramBinnings, CSV, DataFrames, DataFramesMeta
 ```
 
 ## Preparing input data

@@ -1,5 +1,5 @@
-using HetDister
-using HetDister: npar, setinit!, initialize!, fit_model_epochs!, PInit, 
+using IBSpector
+using IBSpector: npar, setinit!, initialize!, fit_model_epochs!, PInit, 
     setnepochs!, timesplitter, integral_ws, next!,
     reset_perturb!, perturb_fit!, residstructure, compute_residuals
 using PopSim
@@ -7,7 +7,7 @@ using HistogramBinnings
 using Distributions
 using StatsBase, StatsAPI
 using Test
-using HetDister.Spectra
+using IBSpector.Spectra
 
 include("Aqua.jl")
 include("spectra.jl")
@@ -77,8 +77,8 @@ end
     f = fit_model_epochs!(fop, h)
     @test f.converged
     perturb_fit!(f, fop, h)
-    HetDister.setnaive!(fop, false)
-    HetDister.setOptimOptions!(fop, g_tol=1e-3)
+    IBSpector.setnaive!(fop, false)
+    IBSpector.setOptimOptions!(fop, g_tol=1e-3)
     fit_model_epochs!(fop, h)
 end
 
