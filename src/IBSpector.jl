@@ -19,6 +19,9 @@ include("utils.jl")
 include("mle_optimization.jl")
 include("sequential_fit.jl")
 include("corrections.jl")
+include("VCF.jl")
+
+
 
 export pre_fit!, demoinfer, compare_models, sample_model_epochs,
     correctestimate!,
@@ -28,7 +31,8 @@ export pre_fit!, demoinfer, compare_models, sample_model_epochs,
     laplacekingman, mldsmcp,
     extbps,
     lineages, cumulative_lineages, crediblehistory,
-    sampleN, quantilesN
+    sampleN, quantilesN,
+    VCF
 
 
 function integral_ws(edges::AbstractVector{<:Real}, mu::Float64, TN::Vector)

@@ -156,40 +156,50 @@ end
     @test !any(isnan.(resid2))
 end
 
-@testset "fitting procedure" begin
-    @testset "exhaustive pre-fit $(length(TN)÷2) epochs,  mu $mu, rho $rho" for (mu,rho,TN) in itr
-        ibs_segments = get_sim(TN, mu, rho)
-        h = adapt_histogram(ibs_segments; nbins = 200)
-        Ltot = sum(ibs_segments)
-        fop = FitOptions(Ltot, length(ibs_segments), mu, rho; maxnts = 8, force = false)
-        fits = pre_fit!(fop, h, 8)
-        nepochs = length(fits)
-        bestll = argmax(i->fits[i].lp, 1:nepochs)
-        residuals = compute_residuals(h, mu, rho, get_para(fits[bestll]); naive = true)
-        @test abs(mean(residuals)) < 3/sqrt(length(residuals))
-        @test std(residuals) - 1 < 3/sqrt(length(residuals))
-    end
+# Test the fitting procedure on multiple simulated datasets. 
+# This is a long test, so we allow it to be skipped by setting 
+# the environment variable OMIT_LONG_TESTS.
 
-    @testset "Iterative fit" begin
-        mu, rho, TN = mus[1], rhos[1], TNs[3]
-        ibs_segments = get_sim(TN, mu, rho)
-        h = adapt_histogram(ibs_segments; nbins = 200)
-        Ltot = sum(ibs_segments)
-        fop = FitOptions(Ltot, length(ibs_segments), mu, rho)
-        pfits = pre_fit!(fop, h, 5)
-        res = demoinfer(h, 4:5, fop)
-        best = compare_models(res.fits)
-        @test !isnothing(best)
-        @test best.nepochs == 5
-        m = 2
-        for i in 1:length(res.chains[m])
-            p = get_para(res.chains[m][i])
-            wth = integral_ws(h.edges[1], mu, p)
-            ws = wth .+ res.corrections[m][i]
-            ws = max.(0,ws)
-            resid = (h.weights .- ws) ./ sqrt.(h.weights .+ ws)
-            resid[ws .== 0 .& h.weights .== 0] .= 0
-            @test std(resid) - 1 < 3/sqrt(length(resid))
+if haskey(ENV, "OMIT_LONG_TESTS")
+    @info "Omitting long tests"
+else
+
+    @testset verbose = true "fitting procedure" begin
+        @testset "exhaustive pre-fit $(length(TN)÷2) epochs,  mu $mu, rho $rho" for (mu,rho,TN) in itr
+            ibs_segments = get_sim(TN, mu, rho)
+            h = adapt_histogram(ibs_segments; nbins = 200)
+            Ltot = sum(ibs_segments)
+            fop = FitOptions(Ltot, length(ibs_segments), mu, rho; maxnts = 8, force = false)
+            fits = pre_fit!(fop, h, 8)
+            nepochs = length(fits)
+            bestll = argmax(i->fits[i].lp, 1:nepochs)
+            residuals = compute_residuals(h, mu, rho, get_para(fits[bestll]); naive = true)
+            @test abs(mean(residuals)) < 3/sqrt(length(residuals))
+            @test std(residuals) - 1 < 3/sqrt(length(residuals))
+        end
+
+        @testset "Iterative fit" begin
+            mu, rho, TN = mus[1], rhos[1], TNs[3]
+            ibs_segments = get_sim(TN, mu, rho)
+            h = adapt_histogram(ibs_segments; nbins = 200)
+            Ltot = sum(ibs_segments)
+            fop = FitOptions(Ltot, length(ibs_segments), mu, rho)
+            pfits = pre_fit!(fop, h, 5)
+            res = demoinfer(h, 4:5, fop)
+            best = compare_models(res.fits)
+            @test !isnothing(best)
+            @test best.nepochs == 5
+            m = 2
+            for i in 1:length(res.chains[m])
+                p = get_para(res.chains[m][i])
+                wth = integral_ws(h.edges[1], mu, p)
+                ws = wth .+ res.corrections[m][i]
+                ws = max.(0,ws)
+                resid = (h.weights .- ws) ./ sqrt.(h.weights .+ ws)
+                resid[ws .== 0 .& h.weights .== 0] .= 0
+                @test std(resid) - 1 < 3/sqrt(length(resid))
+            end
         end
     end
+
 end
