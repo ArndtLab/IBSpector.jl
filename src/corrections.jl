@@ -1,6 +1,5 @@
 function ramp(iter, mu, rho)
     min(mu/10 * iter, rho)
-    # rho
 end
 
 """
@@ -176,6 +175,10 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     f = chain[best]
     resid = compute_residuals(h_obs, ybest)
     p = residstructure(resid[fop.locut:end])
+
+    temp = h_obs.weights .- corrections[best]
+    temp .= round.(Int, temp)
+    h_mod.weights .= max.(temp, 0)
 
     (;
         f,
