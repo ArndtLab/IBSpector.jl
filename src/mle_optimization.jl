@@ -197,7 +197,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
     p = fill(1, length(para))
     q025 = fill(0.0, length(para))
     q975 = fill(0.0, length(para))
-    q05 = fill(0.0, length(para))
+    q05 = fill(0.0, length(para)) # to remove
     q95 = fill(0.0, length(para))
     q50 = fill(0.0, length(para))
     logevidence = -Inf
@@ -217,13 +217,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
         p = map(z -> StatsAPI.pvalue(Distributions.Normal(), z; tail=:right), zscore)
     
         # Confidence interval (CI)
-        cut_vec = eigen(hess[2:end, 2:end]).vectors
-        qs = slice(para, cut_vec, edges, counts, options)
-        q025 .= qs[:,1]
-        q975 .= qs[:,end]
-        q05 .= qs[:,2]
-        q95 .= qs[:,end-1]
-        q50 .= qs[:,3]
+        q025, q975 = slice(para, eigen_problem.vectors, edges, counts, options)
     
         marglike = mvnormcdf(para, covar, options.low, options.upp)
         # assuming uniform prior and Taylor expansion of the log-like around the mode
@@ -291,7 +285,7 @@ function sample_model_epochs!(
     
     init_ = InitFromParams(VarNamedTuple(; TN = options.init))
     chain = with_logger(logger) do
-        sample(model, NUTS(), nsamples; initial_params=init_)
+        sample(model, NUTS(1000, 0.5; init_ϵ=0.1), nsamples; initial_params=init_)
     end
     return chain
 end
@@ -320,60 +314,44 @@ end
 
 function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
     edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer}, options::FitOptions;
-    ngrid = 5_000, ps = [0.025, 0.05, 0.5, 0.95, 0.975]
+    ngrid = 5_000
 )
-    grid = zeros(2ngrid)
-    qs = zeros(length(TN), length(ps))
-    qs_ = zeros(length(TN), length(ps))
-    for i in 1:length(TN)-1
+    ll_threshold = llike(edges, counts, options.mu, options.locut, TN) - 2
+    offset_low  = zeros(length(TN))
+    offset_high = zeros(length(TN))
+    # max possible step in each direction: largest distance to any bound across all params
+    global_lmax = maximum(options.upp .- options.low)
+    for i in 1:size(eigenvec, 2)
         dir = eigenvec[:, i]
-        pushfirst!(dir, 0.)
-        # TN + λ * dir >= options.low
-        # TN + λ * dir <= options.upp
-        lmin = (options.low .- TN) ./ dir
-        lmax = (options.upp .- TN) ./ dir
-        for j in eachindex(TN)
-            if lmin[j] > lmax[j]
-                lmin[j], lmax[j] = lmax[j], lmin[j]
-            end
-        end
-        lmin = maximum(lmin[2:end]) - 2/ngrid
-        lmax = minimum(lmax[2:end]) + 2/ngrid
-        lambdasp = logrange(1/ngrid, lmax, ngrid)
-        lambdasn = logrange(abs(lmin), 1/ngrid, ngrid)
-        grid .= 0.
+        lambdasp = logrange(1/ngrid, global_lmax, ngrid)
+        lambdasn = logrange(1/ngrid, global_lmax, ngrid)
+        # positive direction: find first λ where likelihood drops to threshold
+        lambda_pos = global_lmax
         for j in 1:ngrid
-            v = TN .- lambdasn[j] * dir
-            @assert all(options.low/1.01 .<= v .<= options.upp*1.01) v
-            ll = llike(edges, counts, options.mu, options.locut, v)
-            grid[j] = ll
-            v = TN .+ lambdasp[j] * dir
-            @assert all(options.low/1.01 .<= v .<= options.upp*1.01) v
-            ll = llike(edges, counts, options.mu, options.locut, v)
-            grid[ngrid+j] = ll
-        end
-        grid .= grid .- maximum(grid)
-        grid .= exp.(grid)
-        trapz = (grid[1:end-1] .+ grid[2:end]) ./ 2
-        for j in 2:ngrid
-            trapz[j-1] *= -lambdasn[j] + lambdasn[j-1]
-            trapz[ngrid+j-1] *= lambdasp[j] - lambdasp[j-1]
-        end
-        trapz[ngrid] *= lambdasp[1] - (-lambdasn[end])
-        cum = cumsum(trapz)
-        @assert !iszero(cum[end])
-        cum ./= cum[end]
-        for j in eachindex(ps)
-            qi = findfirst(cum .>= ps[j])
-            if qi <= ngrid
-                qs_[:,j] .= -lambdasn[qi] * dir
-            else
-                qs_[:,j] .= lambdasp[qi-ngrid] * dir
+            v = clamp.(TN .+ lambdasp[j] * dir, options.low, options.upp)
+            if llike(edges, counts, options.mu, options.locut, v) <= ll_threshold
+                lambda_pos = lambdasp[j]
+                break
             end
         end
-        sort!(qs, dims=2)
-        qs .+= qs_
+        # negative direction
+        lambda_neg = global_lmax
+        for j in 1:ngrid
+            v = clamp.(TN .- lambdasn[j] * dir, options.low, options.upp)
+            if llike(edges, counts, options.mu, options.locut, v) <= ll_threshold
+                lambda_neg = lambdasn[j]
+                break
+            end
+        end
+        pos_offset =  lambda_pos * dir
+        neg_offset = -lambda_neg * dir
+        for j in eachindex(TN)
+            offset_high[j] = max(offset_high[j], pos_offset[j], neg_offset[j])
+            offset_low[j]  = min(offset_low[j],  pos_offset[j], neg_offset[j])
+        end
     end
-    qs .+= TN
-    return qs
+    # clamp final bounds to parameter space
+    q_low  = clamp.(TN .+ offset_low,  options.low, options.upp)
+    q_high = clamp.(TN .+ offset_high, options.low, options.upp)
+    return q_low, q_high
 end
