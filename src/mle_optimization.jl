@@ -27,24 +27,6 @@ end
     end
 end
 
-function llike(edges::AbstractVector{<:Integer}, 
-    counts::AbstractVector{<:Integer}, mu::Float64, locut::Int,
-    TN::AbstractVector{<:Real}
-)
-    ll = 0.
-    a = 0.5
-    last_hid_I = laplacekingmanint(edges[locut] - a, mu, TN)
-    for i in locut:length(counts)
-        @inbounds this_hid_I = laplacekingmanint(edges[i+1] - a, mu, TN)
-        m = this_hid_I - last_hid_I
-        @assert !isnan(m) TN
-        @assert m>0 TN
-        last_hid_I = this_hid_I
-        ll += logpdf(Poisson(m), counts[i])
-    end
-    return ll
-end
-
 # unused
 @model function model_corrected(edges::AbstractVector{<:Integer}, 
     counts::AbstractVector{<:Integer}, mu::Float64, rate::Float64, locut::Int,
@@ -142,7 +124,7 @@ function fit_model_epochs!(
             model, MLE(), options.solver; initial_params=pars_, options.opt...
         )
     end
-    return getFitResult(mle, options, counts, edges; stats)
+    return getFitResult(mle, options, counts; stats)
 end
 
 # unused
@@ -166,10 +148,10 @@ function fit_model_epochs!(
             model, MLE(), options.solver; initial_params=pars_, options.opt...
         )
     end
-    return getFitResult(mle, options, counts, edges; stats)
+    return getFitResult(mle, options, counts; stats)
 end
 
-function getFitResult(mle, options::FitOptions, counts, edges; stats = true)
+function getFitResult(mle, options::FitOptions, counts; stats = true)
     para = mle.params[@varname(TN)]
     lp = mle.lp
     
@@ -178,10 +160,10 @@ function getFitResult(mle, options::FitOptions, counts, edges; stats = true)
     else
         hess = nothing
     end
-    return getFitResult(hess, para, lp, mle.optim_result, options, counts, edges, stats)
+    return getFitResult(hess, para, lp, mle.optim_result, options, counts, stats)
 end
 
-function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts, edges, stats)
+function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts, stats)
     if stats
         eigen_problem = eigen(hess)
         lambdas = eigen_problem.values
@@ -195,11 +177,8 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
     stderrors = fill(Inf, length(para))
     zscore = fill(0.0, length(para))
     p = fill(1, length(para))
-    q025 = fill(0.0, length(para))
-    q975 = fill(0.0, length(para))
-    q05 = fill(0.0, length(para)) # to remove
-    q95 = fill(0.0, length(para))
-    q50 = fill(0.0, length(para))
+    ci_low = fill(-Inf, length(para))
+    ci_high = fill(Inf, length(para))
     logevidence = -Inf
     marglike = 0
     convex_opt = false
@@ -217,10 +196,12 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
         p = map(z -> StatsAPI.pvalue(Distributions.Normal(), z; tail=:right), zscore)
     
         # Confidence interval (CI)
-        q025, q975 = slice(para, eigen_problem.vectors, edges, counts, options)
+        q = Statistics.quantile(Distributions.Normal(), (1 + options.level) / 2)
+        ci_low = para .- q .* stderrors
+        ci_high = para .+ q .* stderrors
     
         marglike = mvnormcdf(para, covar, options.low, options.upp)
-        # assuming uniform prior and Taylor expansion of the log-like around the mode
+        # assuming uniform prior
         logevidence = lp + sum(log.(1.0 ./ (options.upp - options.low))) +
             log(marglike[1])
     end
@@ -230,9 +211,6 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
         length(counts),
         options.mu,
         options.rho,
-        q50,
-        q025,
-        q975,
         para,
         stderrors,
         summary(options.solver),
@@ -244,7 +222,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
             at_any_boundary = any(at_uboundary) || any(at_lboundary), 
             at_uboundary, at_lboundary,
             options.low, options.upp, options.init,
-            zscore, pvalues = p, q05, q95,
+            zscore, pvalues = p, ci_low, ci_high,
             convex_opt, marglike,
             hess)
     )
@@ -310,48 +288,3 @@ function sample_model_epochs!(
     return chain
 end
 
-# log-likelihood (and posterior) slices
-
-function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
-    edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer}, options::FitOptions;
-    ngrid = 5_000
-)
-    ll_threshold = llike(edges, counts, options.mu, options.locut, TN) - 2
-    offset_low  = zeros(length(TN))
-    offset_high = zeros(length(TN))
-    # max possible step in each direction: largest distance to any bound across all params
-    global_lmax = maximum(options.upp .- options.low)
-    for i in 1:size(eigenvec, 2)
-        dir = eigenvec[:, i]
-        lambdasp = logrange(1/ngrid, global_lmax, ngrid)
-        lambdasn = logrange(1/ngrid, global_lmax, ngrid)
-        # positive direction: find first λ where likelihood drops to threshold
-        lambda_pos = global_lmax
-        for j in 1:ngrid
-            v = clamp.(TN .+ lambdasp[j] * dir, options.low, options.upp)
-            if llike(edges, counts, options.mu, options.locut, v) <= ll_threshold
-                lambda_pos = lambdasp[j]
-                break
-            end
-        end
-        # negative direction
-        lambda_neg = global_lmax
-        for j in 1:ngrid
-            v = clamp.(TN .- lambdasn[j] * dir, options.low, options.upp)
-            if llike(edges, counts, options.mu, options.locut, v) <= ll_threshold
-                lambda_neg = lambdasn[j]
-                break
-            end
-        end
-        pos_offset =  lambda_pos * dir
-        neg_offset = -lambda_neg * dir
-        for j in eachindex(TN)
-            offset_high[j] = max(offset_high[j], pos_offset[j], neg_offset[j])
-            offset_low[j]  = min(offset_low[j],  pos_offset[j], neg_offset[j])
-        end
-    end
-    # clamp final bounds to parameter space
-    q_low  = clamp.(TN .+ offset_low,  options.low, options.upp)
-    q_high = clamp.(TN .+ offset_high, options.low, options.upp)
-    return q_low, q_high
-end

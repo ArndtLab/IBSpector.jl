@@ -14,9 +14,6 @@ struct FitResult
     bin::Int
     mu::Float64
     rho::Float64
-    q50::Vector
-    q025::Vector
-    q975::Vector
     para::Vector
     stderrors::Vector
     method::String
