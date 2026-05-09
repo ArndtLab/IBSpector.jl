@@ -217,7 +217,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
         upp_c[2:2:end] .= 1 ./ (2 * tmp)
         covar_c = covar .* (scaler * scaler')
         marglike = mvnormcdf(para_c, covar_c, low_c, upp_c)
-        lambdas = eigen(covar_c).values
+        lambdas = real.(eigen(covar_c).values)
         lambdas[lambdas .<= 0] .= eps()
         # assuming uniform prior
         logevidence = lp + sum(log.(1.0 ./ (upp_c - low_c))) +
