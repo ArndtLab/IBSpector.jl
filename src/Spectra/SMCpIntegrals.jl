@@ -5,8 +5,7 @@ using LinearAlgebra
 using Base.Threads
 using PreallocationTools
 
-include("CoalescentBase.jl")
-using .CoalescentBase
+using ..CoalescentBase
 
 export IntegralArrays, prordn!,
     firstorder, firstorderint
