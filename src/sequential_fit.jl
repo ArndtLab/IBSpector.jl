@@ -32,7 +32,7 @@ end
 function epochfinder!(init::Vector{T}, N0, t, fop::FitOptions) where {T <: Number}
     # these are the absolute times separating epochs
     # ordered from ancient to recent
-    ts = reverse(pushfirst!(cumsum(init[end-1:-2:3]),0))
+    ts = [Spectra.getts(init,i) for i in fop.nepochs-1:-1:1]
     split_epoch = findfirst(ts .< t)
     isnothing(split_epoch) && (split_epoch = 1)
 
@@ -47,10 +47,7 @@ function epochfinder!(init::Vector{T}, N0, t, fop::FitOptions) where {T <: Numbe
         newT1 = max(newT1, 20)
         newT2 = t - ts[split_epoch]
         newT2 = max(newT2, 20)
-        newN = init[2split_epoch] * 0.99
-        if newN > (fop.upp[2split_epoch] / 1.01)
-            newN = N0
-        end
+        newN = init[2split_epoch]
         init[2split_epoch-1] = newT1
         insert!(init, 2split_epoch, newT2)
         insert!(init, 2split_epoch, newN)

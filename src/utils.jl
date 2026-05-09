@@ -338,7 +338,7 @@ function initialize!(fop::FitOptions, weights::AbstractVector{<:Integer})
     N = 1/(4*fop.mu*(fop.Ltot/vol)) # can be rough estimate depending on binning
     n = npar(fop)
     fop.init[1] = fop.Ltot
-    fop.init[2:end] .= N .* (0.99 .+ rand(n-1) .* 0.02)
+    fop.init[2:end] .= N
     if n > 2
         nlin = 4 * fop.rho * N * fop.Ltot / n * 2
         grid = logrange(1, 1e7, 200)
