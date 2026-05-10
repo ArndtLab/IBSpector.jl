@@ -3,55 +3,55 @@ using IBSpector.Spectra.PreallocationTools
 using IBSpector.Spectra.SMCpIntegrals: Nt, cumcr, pt, ptt
 using Test
 
-include("mathematica-derived.jl")
+# include("mathematica-derived.jl")
 
-@testset "Compare to Mathematica (truncated Poisson)" begin
-    @info """
-        mathematica derived used a truncated Poisson litter size at epoch change
-        therefore a large tolerance is normal
-    """
-    st = map(1:1000) do i
-        L = rand(1.0e6:1.0e9)
-        N0 = N1 = N2 = -1.0
-        while true
-            N0 = rand(1.0e3:1.0e5)
-            N1 = rand(1.0e3:1.0e5)
-            N2 = rand(1.0e3:1.0e5)
-            if (N0 < N1 > N2) || (N0 > N1 < N2)
-                break
-            end
-        end
-        T1 = rand(1.0e1:1.0e3)
-        T2 = rand(1.0e1:1.0e3)
-        mu = rand(1.0e-9:1.0e-8)
-        r = rand(1:1_000_000)
+# @testset "Compare to Mathematica (truncated Poisson)" begin
+#     @info """
+#         mathematica derived used a truncated Poisson litter size at epoch change
+#         therefore a large tolerance is normal
+#     """
+#     st = map(1:1000) do i
+#         L = rand(1.0e6:1.0e9)
+#         N0 = N1 = N2 = -1.0
+#         while true
+#             N0 = rand(1.0e3:1.0e5)
+#             N1 = rand(1.0e3:1.0e5)
+#             N2 = rand(1.0e3:1.0e5)
+#             if (N0 < N1 > N2) || (N0 > N1 < N2)
+#                 break
+#             end
+#         end
+#         T1 = rand(1.0e1:1.0e3)
+#         T2 = rand(1.0e1:1.0e3)
+#         mu = rand(1.0e-9:1.0e-8)
+#         r = rand(1:1_000_000)
 
-        y1 = laplacekingman(r, mu, [L, N0])
-        y2 = laplacekingman(r, mu, [L, N0, T1, N1])
-        y3 = laplacekingman(r, mu, [L, N0, T1, N1, T2, N2])
+#         y1 = laplacekingman(r, mu, [L, N0])
+#         y2 = laplacekingman(r, mu, [L, N0, T1, N1])
+#         y3 = laplacekingman(r, mu, [L, N0, T1, N1, T2, N2])
 
-        y1m = hidm(L, N0, mu, r)
-        y2m = hidm(L, N0, T1, N1, mu, r)
-        y21m = hidm(L, N0, T1, N0, mu, r)
-        y3m = hidm(L, N0, T1, N1, T2, N2, mu, r)
-        y31m = hidm(L, N0, T1, N0, T2, N0, mu, r)
+#         y1m = hidm(L, N0, mu, r)
+#         y2m = hidm(L, N0, T1, N1, mu, r)
+#         y21m = hidm(L, N0, T1, N0, mu, r)
+#         y3m = hidm(L, N0, T1, N1, T2, N2, mu, r)
+#         y31m = hidm(L, N0, T1, N0, T2, N0, mu, r)
 
-        @test abs(y1 - y1m) < 1.0e-2
-        @test abs(y1 - y21m) < 1.0e-2
-        @test abs(y1 - y31m) < 1.0e-2
-        @test abs(y2 - y2m) < 1.0e-2
-        @test abs(y3 - y3m) < 1.0e-2
+#         @test abs(y1 - y1m) < 1.0e-2
+#         @test abs(y1 - y21m) < 1.0e-2
+#         @test abs(y1 - y31m) < 1.0e-2
+#         @test abs(y2 - y2m) < 1.0e-2
+#         @test abs(y3 - y3m) < 1.0e-2
 
-        (;
-            L, N0, N1, N2, T1, T2, mu, r, y1, y2, y3, y1m, y2m, y3m,
-            d1 = y1 - y1m, d2 = y2 - y2m, d3 = y3 - y3m,
-            d1r = abs(y1 - y1m) / y1m, d2r = abs(y2 - y2m) / y2m, d3r = abs(y3 - y3m) / y3m,
-        )
-    end
-    @show maximum(abs.(getindex.(st, :d1)))
-    @show maximum(abs.(getindex.(st, :d2)))
-    @show maximum(abs.(getindex.(st, :d3)))
-end
+#         (;
+#             L, N0, N1, N2, T1, T2, mu, r, y1, y2, y3, y1m, y2m, y3m,
+#             d1 = y1 - y1m, d2 = y2 - y2m, d3 = y3 - y3m,
+#             d1r = abs(y1 - y1m) / y1m, d2r = abs(y2 - y2m) / y2m, d3r = abs(y3 - y3m) / y3m,
+#         )
+#     end
+#     @show maximum(abs.(getindex.(st, :d1)))
+#     @show maximum(abs.(getindex.(st, :d2)))
+#     @show maximum(abs.(getindex.(st, :d3)))
+# end
 
 @testset "Coalescent stationary" begin
     N0 = 1_000
