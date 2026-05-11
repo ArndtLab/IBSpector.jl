@@ -19,7 +19,7 @@ struct FitResult
     method::String
     converged::Bool
     lp::Float64
-    evidence::Float64
+    logevd::Float64
     opt
 end
 
@@ -33,7 +33,7 @@ function Base.show(io::IO, f::FitResult)
     for i in 2:length(f.para)
         print(io, ", ", @sprintf("%.1f",f.para[i]))
     end
-    print(io, "] ", @sprintf("logL %.3f",f.lp), @sprintf(" | evidence %.3f",f.evidence))
+    print(io, "] ", @sprintf("logL %.3f",f.lp), @sprintf(" | log-evidence %.3f",f.logevd))
 end
 
 """
@@ -55,7 +55,7 @@ sds(fit::FitResult) = copy(fit.stderrors)
 
 Return the log-evidence of the fit.
 """
-evd(fit::FitResult) = fit.evidence
+evd(fit::FitResult) = fit.logevd
 
 """
     loglike(fit::FitResult)
@@ -103,6 +103,12 @@ function get_covar(fit::FitResult)
     lambdas[lambdas .<= 0] .= eps()
     covar = eigen_problem.vectors *
         diagm(inv.(lambdas)) * eigen_problem.vectors'
+    for i in eachindex(lambdas)
+        for j in i:length(lambdas)
+            covar[i,j] = (covar[i,j] + covar[j,i]) / 2
+            covar[j,i] = covar[i,j]
+        end
+    end
     return covar
 end
 
@@ -127,7 +133,7 @@ function flags(fit::FitResult)
         ci_low = any(fit.opt.ci_low .< 0),
         fit.opt.at_any_boundary,
         log_like = fit.lp,
-        log_evidence = fit.evidence,
+        log_evidence = fit.logevd,
         optimizer_message = fit.opt.optim_result.original
     )
 end
@@ -332,7 +338,7 @@ function initialize!(fop::FitOptions, weights::AbstractVector{<:Integer})
     N = 1/(4*fop.mu*(fop.Ltot/vol)) # can be rough estimate depending on binning
     n = npar(fop)
     fop.init[1] = fop.Ltot
-    fop.init[2:end] .= N .* (0.99 .+ rand(n-1) .* 0.02)
+    fop.init[2:end] .= N
     if n > 2
         nlin = 4 * fop.rho * N * fop.Ltot / n * 2
         grid = logrange(1, 1e7, 200)
