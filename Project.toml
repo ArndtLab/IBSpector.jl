@@ -1,6 +1,6 @@
 name = "IBSpector"
 uuid = "50651ce3-0423-45d2-b99c-8ea4267d2717"
-version = "0.12.1"
+version = "0.12.2"
 authors = ["Tommaso Stentella <stentell@molgen.mpg.de> and contributors"]
 
 [deps]
