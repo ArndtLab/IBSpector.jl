@@ -182,7 +182,6 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
     logevidence = -Inf
     marglike = 0
     convex_opt = false
-    covar_c = nothing
     if stats && isreal(lambdas)
         lambdas = real.(lambdas)
         if all(lambdas .> 0)
@@ -194,8 +193,10 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
         vars_ = diag(covar)
         stderrors = sqrt.(vars_)
         scaler = ones(length(para))
-        scaler[2:2:end] .= 1 ./ (2 * para[2:2:end] .^ 2)
-        std_c = stderrors .* scaler
+        scaler[2:2:end] .= 1 ./ para[2:2:end]
+        std_c = stderrors .* scaler .^ 2
+        para_l = copy(para)
+        para_l[2:2:end] .= log.(para[2:2:end])
         para_c = copy(para)
         para_c[2:2:end] .= 1 ./ (2 * para[2:2:end])
         zscore = para_c ./ std_c
@@ -204,24 +205,21 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
         # Confidence interval (CI)
         q = Statistics.quantile(Distributions.Normal(), (1 + options.level) / 2)
         ci_low = para_c .- q .* std_c
+        ci_low[2:2:end] .= 1 ./ (2 * (para_c[2:2:end] .+ q .* std_c[2:2:end]))
         ci_low .= max.(ci_low, 0.0)
-        ci_high = para_c .+ q .* std_c
-        tmp = ci_low[2:2:end]
-        ci_low[2:2:end] .= 1 ./ (2 * ci_high[2:2:end])
-        ci_high[2:2:end] .= 1 ./ (2 * tmp)
+        ci_high = para .+ q .* stderrors
     
-        low_c = copy(options.low)
-        upp_c = copy(options.upp)
-        tmp = low_c[2:2:end]
-        low_c[2:2:end] .= 1 ./ (2 * upp_c[2:2:end])
-        upp_c[2:2:end] .= 1 ./ (2 * tmp)
-        covar_c = covar .* (scaler * scaler')
-        marglike = mvnormcdf(para_c, covar_c, low_c, upp_c)
-        lambdas = real.(eigen(covar_c).values)
-        lambdas[lambdas .<= 0] .= eps()
+        low_l = copy(options.low)
+        upp_l = copy(options.upp)
+        low_l[2:2:end] .= log.(low_l[2:2:end])
+        upp_l[2:2:end] .= log.(upp_l[2:2:end])
+        covar_l = covar .* (scaler * scaler')
+        marglike = mvnormcdf(para_l, covar_l, low_l, upp_l)
+        lambdas_l = real.(eigen(covar_l).values)
+        lambdas_l[lambdas_l .<= 0] .= eps()
         # assuming uniform prior
-        logevidence = lp + sum(log.(1.0 ./ (upp_c - low_c))) +
-            log(marglike[1]) + length(para_c)/2 * log(2 * pi) + sum(log.(lambdas))/2
+        logevidence = lp + sum(log.(1.0 ./ (upp_l - low_l))) +
+            log(marglike[1]) + length(para_l)/2 * log(2 * pi) + sum(log.(lambdas_l))/2
     end
 
     FitResult(
@@ -242,7 +240,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
             options.low, options.upp, options.init,
             zscore, pvalues = p, ci_low, ci_high,
             convex_opt, marglike,
-            hess, covar_c)
+            hess)
     )
 end
 
@@ -281,7 +279,7 @@ function sample_model_epochs!(
     
     init_ = InitFromParams(VarNamedTuple(; TN = options.init))
     chain = with_logger(logger) do
-        sample(model, NUTS(1000, 0.5; init_ϵ=0.1), nsamples; initial_params=init_)
+        sample(model, NUTS(1000, 0.65; init_ϵ=0.1), nsamples; initial_params=init_)
     end
     return chain
 end
