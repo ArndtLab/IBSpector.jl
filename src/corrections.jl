@@ -144,7 +144,7 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         corr[1:corcut] .= 0.
         lim = findfirst(corr .> h_mod.weights)
         if isnothing(lim)
-            lim = length(corr)
+            lim = length(corr) + 1
         end
         corr[lim:end] .= 0.
         temp = h_mod.weights .- corr
@@ -174,7 +174,8 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     ybest = yths[best]
     f = chain[best]
     resid = compute_residuals(h_obs, ybest)
-    p = residstructure(resid[fop.locut:end])
+    lim = findfirst(h_obs.weights .== 0)
+    p = residstructure(resid[fop.locut:lim])
 
     temp = h_obs.weights .- corrections[best]
     temp .= round.(Int, temp)
