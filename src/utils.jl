@@ -300,8 +300,8 @@ function FitOptions(Ltot, nhet, mu, rho;
     end
 
     solver = LBFGS()
-    maxiters = 6000
-    maxtime = 60
+    maxiters = 30000
+    maxtime = 120
     g_tol = 5e-8
     if nhet > 1e7
         maxiters = 30000
@@ -453,15 +453,15 @@ Set the options which are passed to `Optimization.solve`, see
 [Optimization.jl](https://docs.sciml.ai/Optimization/stable/API/solve/#Common-Solver-Options-(Solve-Keyword-Arguments)).
 and the specific `Optim.jl` section, which is the default optimizer. Defaults are:
 - `solver`: The solver to use for the optimization, default is `LBFGS()`.
-- `maxiters = 6000`
-- `maxtime = 60`
+- `maxiters = 30000`
+- `maxtime = 120` (in seconds)
 - `g_tol = 5e-8`
 If given more parameters, they are passed to the optimizer.
 """
 function setOptimOptions!(fop::FitOptions;
     solver = LBFGS(),
-    maxiters = 6000,
-    maxtime = 60,
+    maxiters = 30000,
+    maxtime = 120,
     g_tol = 5e-8,
     kwargs...
 )
