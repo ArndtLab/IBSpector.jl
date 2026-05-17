@@ -119,7 +119,6 @@ Return a named tuple of flags and diagnostics for the fit, including:
 - `converged`: whether the optimization converged
 - `convex_optimum`: whether the likelihood Hessian at the optimum
   is **strictly** positive definite.
-- `ci_low`: whether the confidence interval of any parameter includes zero
 - `at_any_boundary`: whether any parameter is at its lower or upper bound
 - `log_like`: the log-likelihood of the fit
 - `log_evidence`: the log-evidence of the fit
@@ -130,7 +129,6 @@ function flags(fit::FitResult)
     return (;
         converged = fit.converged,
         convex_optimum = fit.opt.convex_opt,
-        ci_low = any(fit.opt.ci_low .< 0),
         fit.opt.at_any_boundary,
         log_like = fit.lp,
         log_evidence = fit.logevd,
@@ -218,7 +216,6 @@ mutable struct FitOptions
     low::LBound
     upp::UBound
     prior::Vector{<:Distribution}
-    level::Float64
     force::Bool
     maxnts::Int
     naive::Bool
@@ -252,7 +249,6 @@ recombination rate `rho` per base pair per generation.
 ## Optional Arguments
 - `Tlow::Number=10`, `Tupp::Number=1e7`: The lower and upper bounds for the duration of epochs.
 - `Nlow::Number=10`, `Nupp::Number=1e8`: The lower and upper bounds for the population sizes.
-- `level::Float64=0.95`: The confidence level for the confidence intervals on the parameters estimates.
 - `force::Bool=true`: if true try to fit further epochs even when no signal is found.
 - `maxnts::Int=5`: The maximum number of new time splits to consider when adding a new epoch.
   Higher is greedier.
@@ -266,7 +262,6 @@ recombination rate `rho` per base pair per generation.
 function FitOptions(Ltot, nhet, mu, rho;
     Tlow = 10, Tupp = 1e7,
     Nlow = 10, Nupp = 1e8,
-    level = 0.95,
     nepochs::Int = 1,
     force::Bool = true,
     maxnts::Int = 5,
@@ -300,8 +295,8 @@ function FitOptions(Ltot, nhet, mu, rho;
     end
 
     solver = LBFGS()
-    maxiters = 30000
-    maxtime = 120
+    maxiters = 10000
+    maxtime = 60
     g_tol = 5e-8
     if nhet > 1e7
         maxiters = 30000
@@ -322,7 +317,6 @@ function FitOptions(Ltot, nhet, mu, rho;
         low,
         upp,
         prior,
-        level,
         force,
         maxnts,
         naive,
@@ -453,15 +447,15 @@ Set the options which are passed to `Optimization.solve`, see
 [Optimization.jl](https://docs.sciml.ai/Optimization/stable/API/solve/#Common-Solver-Options-(Solve-Keyword-Arguments)).
 and the specific `Optim.jl` section, which is the default optimizer. Defaults are:
 - `solver`: The solver to use for the optimization, default is `LBFGS()`.
-- `maxiters = 30000`
-- `maxtime = 120` (in seconds)
+- `maxiters = 10000`
+- `maxtime = 60` (in seconds)
 - `g_tol = 5e-8`
 If given more parameters, they are passed to the optimizer.
 """
 function setOptimOptions!(fop::FitOptions;
     solver = LBFGS(),
-    maxiters = 30000,
-    maxtime = 120,
+    maxiters = 10000,
+    maxtime = 60,
     g_tol = 5e-8,
     kwargs...
 )
