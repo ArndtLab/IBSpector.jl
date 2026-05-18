@@ -27,6 +27,24 @@ end
     end
 end
 
+function llike(edges::AbstractVector{<:Integer}, 
+    counts::AbstractVector{<:Integer}, mu::Float64, locut::Int,
+    TN::AbstractVector{<:Real}
+)
+    ll = 0.
+    a = 0.5
+    last_hid_I = laplacekingmanint(edges[locut] - a, mu, TN)
+    for i in locut:length(counts)
+        @inbounds this_hid_I = laplacekingmanint(edges[i+1] - a, mu, TN)
+        m = this_hid_I - last_hid_I
+        @assert !isnan(m) TN
+        @assert m>0 TN
+        last_hid_I = this_hid_I
+        ll += logpdf(Poisson(m), counts[i])
+    end
+    return ll
+end
+
 # unused
 @model function model_corrected(edges::AbstractVector{<:Integer}, 
     counts::AbstractVector{<:Integer}, mu::Float64, rate::Float64, locut::Int,
@@ -124,7 +142,7 @@ function fit_model_epochs!(
             model, MLE(), options.solver; initial_params=pars_, options.opt...
         )
     end
-    return getFitResult(mle, options, counts; stats)
+    return getFitResult(mle, options, edges, counts; stats)
 end
 
 # unused
@@ -148,10 +166,10 @@ function fit_model_epochs!(
             model, MLE(), options.solver; initial_params=pars_, options.opt...
         )
     end
-    return getFitResult(mle, options, counts; stats)
+    return getFitResult(mle, options, edges, counts; stats)
 end
 
-function getFitResult(mle, options::FitOptions, counts; stats = true)
+function getFitResult(mle, options::FitOptions, edges, counts; stats = true)
     para = mle.params[@varname(TN)]
     lp = mle.lp
     
@@ -160,10 +178,10 @@ function getFitResult(mle, options::FitOptions, counts; stats = true)
     else
         hess = nothing
     end
-    return getFitResult(hess, para, lp, mle.optim_result, options, counts, stats)
+    return getFitResult(hess, para, lp, mle.optim_result, options, edges, counts, stats)
 end
 
-function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts, stats)
+function getFitResult(hess, para, lp, optim_result, options::FitOptions, edges, counts, stats)
     if stats
         eigen_problem = eigen(hess)
         lambdas = eigen_problem.values
@@ -175,14 +193,11 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
     at_uboundary = map((x,u) -> (x>u/1.05), para, options.upp)
     at_lboundary = map((l,x) -> (x<l*1.05), options.low, para)
     stderrors = fill(Inf, length(para))
-    zscore = fill(0.0, length(para))
-    p = fill(1, length(para))
     ci_low = fill(-Inf, length(para))
     ci_high = fill(Inf, length(para))
     logevidence = -Inf
     marglike = 0
     convex_opt = false
-    covar_c = nothing
     if stats && isreal(lambdas)
         lambdas = real.(lambdas)
         if all(lambdas .> 0)
@@ -193,35 +208,10 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
             diagm(inv.(lambdas)) * eigen_problem.vectors'
         vars_ = diag(covar)
         stderrors = sqrt.(vars_)
-        scaler = ones(length(para))
-        scaler[2:2:end] .= 1 ./ (2 * para[2:2:end] .^ 2)
-        std_c = stderrors .* scaler
-        para_c = copy(para)
-        para_c[2:2:end] .= 1 ./ (2 * para[2:2:end])
-        zscore = para_c ./ std_c
-        p = map(z -> StatsAPI.pvalue(Distributions.Normal(), z; tail=:right), zscore)
-    
-        # Confidence interval (CI)
-        q = Statistics.quantile(Distributions.Normal(), (1 + options.level) / 2)
-        ci_low = para_c .- q .* std_c
-        ci_low .= max.(ci_low, 0.0)
-        ci_high = para_c .+ q .* std_c
-        tmp = ci_low[2:2:end]
-        ci_low[2:2:end] .= 1 ./ (2 * ci_high[2:2:end])
-        ci_high[2:2:end] .= 1 ./ (2 * tmp)
-    
-        low_c = copy(options.low)
-        upp_c = copy(options.upp)
-        tmp = low_c[2:2:end]
-        low_c[2:2:end] .= 1 ./ (2 * upp_c[2:2:end])
-        upp_c[2:2:end] .= 1 ./ (2 * tmp)
-        covar_c = covar .* (scaler * scaler')
-        marglike = mvnormcdf(para_c, covar_c, low_c, upp_c)
-        lambdas = real.(eigen(covar_c).values)
-        lambdas[lambdas .<= 0] .= eps()
-        # assuming uniform prior
-        logevidence = lp + sum(log.(1.0 ./ (upp_c - low_c))) +
-            log(marglike[1]) + length(para_c)/2 * log(2 * pi) + sum(log.(lambdas))/2
+
+        # assuming uniform prior on N and T and separability of the likelihood
+        ci_low, ci_high, marglike = slice(para, eigen_problem.vectors, edges, counts, options)
+        logevidence = lp + sum(log.(1.0 ./ (options.upp .- options.low))) + log(marglike)
     end
 
     FitResult(
@@ -240,9 +230,9 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, counts,
             at_any_boundary = any(at_uboundary) || any(at_lboundary), 
             at_uboundary, at_lboundary,
             options.low, options.upp, options.init,
-            zscore, pvalues = p, ci_low, ci_high,
+            ci_low, ci_high,
             convex_opt, marglike,
-            hess, covar_c)
+            hess)
     )
 end
 
@@ -281,7 +271,7 @@ function sample_model_epochs!(
     
     init_ = InitFromParams(VarNamedTuple(; TN = options.init))
     chain = with_logger(logger) do
-        sample(model, NUTS(1000, 0.5; init_ϵ=0.1), nsamples; initial_params=init_)
+        sample(model, NUTS(1000, 0.65; init_ϵ=0.1), nsamples; initial_params=init_)
     end
     return chain
 end
@@ -304,4 +294,82 @@ function sample_model_epochs!(
         sample(model, MH(covar), nsamples; initial_params=init_)
     end
     return chain
+end
+
+# log-likelihood (and posterior) slices
+
+function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
+    edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer}, options::FitOptions;
+    ngrid = 5_000
+)
+    ll_hat = llike(edges, counts, options.mu, options.locut, TN)
+    ll_threshold = ll_hat - 2
+    marglike = 1.0
+    offset_low  = zeros(length(TN))
+    offset_high = zeros(length(TN))
+    v = similar(TN)
+    global_lmax = maximum(options.upp .- options.low)
+    lambdas = logrange(1/ngrid, global_lmax, ngrid)
+    for i in 1:size(eigenvec, 2)
+        dir = view(eigenvec, :, i)
+        lambda_pos = global_lmax
+        sum = eps()
+        llp = ll_hat
+        dx = 1/ngrid
+        for j in 1:ngrid
+            v .= TN .+ lambdas[j] * dir
+            ll = llike(edges, counts, options.mu, options.locut,
+                clamp.(v, options.low, options.upp)
+            )
+            if ll >= ll_threshold
+                lambda_pos = lambdas[j]
+            end
+            if j > 1
+                dx = lambdas[j] - lambdas[j-1]
+            end
+            if all(v .>= options.low) && all(v .<= options.upp)
+                sum += (exp(ll - ll_hat) + exp(llp - ll_hat))/2 * dx
+            end
+            llp = ll
+        end
+        # negative direction
+        lambda_neg = global_lmax
+        llp = ll_hat
+        dx = 1/ngrid
+        for j in 1:ngrid
+            v .= TN .- lambdas[j] * dir
+            ll = llike(edges, counts, options.mu, options.locut,
+                clamp.(v, options.low, options.upp)
+            )
+            if ll >= ll_threshold
+                lambda_neg = lambdas[j]
+            end
+            if j > 1
+                dx = lambdas[j] - lambdas[j-1]
+            end
+            if all(v .>= options.low) && all(v .<= options.upp)
+                sum += (exp(ll - ll_hat) + exp(llp - ll_hat))/2 * dx
+            end
+            llp = ll
+        end
+        marglike *= sum
+        pos_offset = lambda_pos * dir
+        neg_offset = - lambda_neg * dir
+        for j in eachindex(TN)
+            if pos_offset[j] > 0
+                offset_high[j] += pos_offset[j]
+            else
+                offset_low[j] += pos_offset[j]
+            end
+            if neg_offset[j] > 0
+                offset_high[j] += neg_offset[j]
+            else
+                offset_low[j] += neg_offset[j]
+            end
+        end
+    end
+    # clamp final bounds to parameter space
+    q_low  = clamp.(TN .+ offset_low,  options.low, options.upp)
+    q_high = clamp.(TN .+ offset_high, options.low, options.upp)
+    return q_low, q_high, marglike
 end

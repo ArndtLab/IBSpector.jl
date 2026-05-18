@@ -24,6 +24,7 @@ Return a named tuple which contains the fields:
   to the best fit, one for each model
 - `resid`: a vector of vectors of residuals, one for each model
 - `p`: a vector of right-tail p-values for the autocorrelation of residuals, one for each model
+- `llbest`: a vector of the best log-likelihoods, one for each model
 - `deltas`: a vector of vectors of the maximum absolute difference between
   corrections in consecutive iterations, and for each model.
 - `lls`: a vector of vectors of log-likelihoods, one for each iteration and
@@ -91,6 +92,7 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochrange::AbstractRange{<:Integer}
         ybest = map(r->r.ybest, results),
         resid = map(r->r.resid, results),
         p = map(r->r.p, results),
+        llbest = map(r->r.llbest, results),
         deltas = map(r->r.deltas, results),
         lls = map(r->r.lls, results),
         conv = map(r->r.conv, results)
@@ -144,7 +146,7 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         corr[1:corcut] .= 0.
         lim = findfirst(corr .> h_mod.weights)
         if isnothing(lim)
-            lim = length(corr)
+            lim = length(corr) + 1
         end
         corr[lim:end] .= 0.
         temp = h_mod.weights .- corr
@@ -173,8 +175,11 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     best = argmax(lls[warmup:end]) + warmup - 1
     ybest = yths[best]
     f = chain[best]
+    ll = lls[best]
     resid = compute_residuals(h_obs, ybest)
-    p = residstructure(resid[fop.locut:end])
+    lim = findfirst(h_obs.weights .== 0)
+    isnothing(lim) && (lim = length(resid))
+    p = residstructure(resid[fop.locut:lim])
 
     temp = h_obs.weights .- corrections[best]
     temp .= round.(Int, temp)
@@ -190,6 +195,7 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         ybest,
         resid,
         p,
+        llbest = ll,
         deltas,
         lls,
         conv
@@ -207,7 +213,7 @@ function correctestimate!(fop::FitOptions, fit::FitResult, h::Histogram)
         tn -> -llsmcp!(bag, rs, h.edges[1].edges, h.weights, fop.mu, fop.rho, fop.locut, tn),
         get_para(fit)
     )
-    return getFitResult(he, fit.para, fit.lp, fit.opt.optim_result, fop, h.weights, true)
+    return getFitResult(he, fit.para, fit.lp, fit.opt.optim_result, fop, h.edges[1], h.weights, true)
 end
 
 """
