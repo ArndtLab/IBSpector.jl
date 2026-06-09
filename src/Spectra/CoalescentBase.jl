@@ -37,7 +37,7 @@ end
 
 # t is assumed to be sorted
 function Nt(t::AbstractVector{<:Real}, TN::AbstractVector{<:Real})
-    res = similar(t)
+    res = zeros(length(t))
     pnt = 1
     for i in eachindex(t)
         while pnt < length(TN)÷2 && getts(TN, pnt+1) <= t[i]
@@ -72,7 +72,7 @@ end
 
 # t2 assumed to be sorted
 function cumcr(t1::Real, t2::AbstractVector{<:Real}, TN::AbstractVector{<:Real})
-    res = similar(t2)
+    res = zeros(length(t2))
     tmp = 0.
     tprev = t1
     for i in eachindex(t2)
