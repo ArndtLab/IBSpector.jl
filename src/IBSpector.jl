@@ -159,19 +159,9 @@ function adapt_histogram(segments::AbstractVector{<:Integer}; lo::Int=1, hi::Int
     append!(h_obs, segments)
     l = findlast(h_obs.weights .> tailthr)
     isnothing(l) && return h_obs
-    while l-1 > 0 && h_obs.weights[l-1] == 0
-        l -= 1
-    end
-    while h_obs.edges[1].edges[l+1] < hi
-        hi = h_obs.edges[1].edges[l+1]
-        h_obs = Histogram(CustomEdgeVector(;lo, hi, nbins))
-        append!(h_obs, segments)
-        l = findlast(h_obs.weights .> tailthr)
-        isnothing(l) && return h_obs
-        while l-1 > 0 && h_obs.weights[l-1] == 0
-            l -= 1
-        end
-    end
+    hi = h_obs.edges[1].edges[l+1]
+    h_obs = Histogram(CustomEdgeVector(;lo, hi, nbins))
+    append!(h_obs, segments)
     return h_obs
 end
 
