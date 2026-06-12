@@ -29,24 +29,23 @@ function timesplitter(h::Histogram, prev_para::Vector{T}, fop::FitOptions;
     return found
 end
 
-function epochfinder!(init::Vector{T}, N0, t, fop::FitOptions) where {T <: Number}
-    # these are the absolute times separating epochs
+function epochfinder!(init::Vector{T}, t, fop::FitOptions) where {T <: Number}
+    nep = fop.nepochs - 1 # previous model
+    # these are the absolute times of epochs changes
     # ordered from ancient to recent
-    ts = [Spectra.getts(init,i) for i in fop.nepochs-1:-1:1]
+    ts = [Spectra.getts(init,i) for i in nep:-1:1]
     split_epoch = findfirst(ts .< t)
     isnothing(split_epoch) && (split_epoch = 1)
 
     if split_epoch == 1
         newT = t - ts[1]
         newT = max(newT, 1000)
-        newN = N0
+        newN = init[2]
         insert!(init, 3, newN)
         insert!(init, 3, newT)
     else
         newT1 = ts[split_epoch-1] - t
-        newT1 = max(newT1, 20)
         newT2 = t - ts[split_epoch]
-        newT2 = max(newT2, 20)
         newN = init[2split_epoch]
         init[2split_epoch-1] = newT1
         insert!(init, 2split_epoch, newT2)
@@ -99,7 +98,6 @@ see also [`FitResult`](@ref).
 function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
 ) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
     fits = FitResult[]
-    N0 = sum(h.weights) / fop.Ltot / 4fop.mu
     @assert nfits > 0 "number of fits has to be strictly positive"
     for i in 1:nfits
         setnepochs!(fop, i)
@@ -112,9 +110,11 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
                 if !fop.force
                     return fits
                 else
-                    r = midpoints(h.edges[1])
-                    append!(ts, tcondr(rand(r), fop.mu))
-                    append!(ts, tcondr(rand(r), fop.mu))
+                    ts = [Spectra.getts(get_para(fits[i-1]), j) for j in 1:i-1]
+                    push!(ts, 1e9)
+                    ts[1] = 1
+                    @debug ts
+                    ts = sqrt.(ts[1:end-1] .* ts[2:end])
                 end
             end
             filter!(t->t!=0, ts)
@@ -130,7 +130,7 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
             end
             @threads for j in eachindex(ts)
                 init = get_para(fits[i-1])
-                epochfinder!(init, N0, ts[j], fops[j])
+                epochfinder!(init, ts[j], fops[j])
                 setinit!(fops[j], init)
                 f = fit_model_epochs!(fops[j], h; stats = false)
                 fs[j] = f
@@ -141,6 +141,7 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
             f2 = perturb_fit!(f, fop, h; by_pass=true)
             setinit!(fop, get_para(f2))
             f = fit_model_epochs!(fop, h)
+            @assert f.lp >= fits[i-1].lp
             @assert all(!isnan, f.para) """
                 NaN parameters $(f.para)
                 $(f.lp)
@@ -150,7 +151,6 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
                 $(f2.para)
             """
         end
-
         push!(fits, f)
     end
     return fits

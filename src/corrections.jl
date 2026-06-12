@@ -1,5 +1,5 @@
 function ramp(iter, mu, rho)
-    min(mu/10 * iter, rho)
+    min(mu/10 * iter, rho, mu)
 end
 
 """
@@ -47,8 +47,6 @@ Return a named tuple which contains the fields:
 - `relchange::Float64=1e-4`: The relative change in parameters to use for convergence.
   This is the maximum relative change in parameters between consecutive iterations.
   The convergence condition test this or `reltol`.
-- `corcut::Int=fop.locut-1`: The index of the last histogram bin to apply corrections to.
-  This should not be changed in most cases.
 """
 function demoinfer(segments::AbstractVector{<:Integer}, epochrange::AbstractRange{<:Integer}, mu::Float64, rho::Float64;
     fop::FitOptions = FitOptions(sum(segments), length(segments), mu, rho),
@@ -64,8 +62,8 @@ function demoinfer(segments::AbstractVector{<:Integer}, epochrange::AbstractRang
 end
 
 """
-    demoinfer(h::Histogram, epochrange, fop::FitOptions; iters=20, reltol=1e-2, corcut=fop.locut-1, finalize=false)
-    demoinfer(h, epochs, fop; iters=20, reltol=1e-2, corcut=fop.locut-1, finalize=false)
+    demoinfer(h::Histogram, epochrange, fop::FitOptions; iters=20, reltol=1e-2, relchange=1e-4)
+    demoinfer(h, epochs, fop; iters=20, reltol=1e-2, relchange=1e-4)
 
 Take an histogram of IBS segments, fit options, and infer demographic models with
 piece-wise constant epochs where the number of epochs is `epochrange`.
@@ -100,7 +98,7 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochrange::AbstractRange{<:Integer}
 end
 
 function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
-    iters::Int = 20, reltol::Float64 = 1e-2, relchange::Float64=1e-4, corcut::Int = fop_.locut-1
+    iters::Int = 20, reltol::Float64 = 1e-2, relchange::Float64=1e-4
 ) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
     @assert !isempty(h_obs.weights) "histogram is empty"
     @assert epochs > 0 "epochrange has to be strictly positive"
@@ -121,8 +119,14 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     h_mod.weights .= h_obs.weights
     corr = zeros(Float64, length(h_obs.weights))
     conv = false
-    warmup = findfirst(x -> fop.rho <= ramp(x, fop.mu, fop.rho), 1:100)
-    isnothing(warmup) && (warmup = 100)
+    warmup = 100
+    for i in 100:-1:2
+        nx = ramp(i, fop.mu, fop.rho)
+        if nx != ramp(i-1, fop.mu, fop.rho)
+            warmup = i
+            break
+        end
+    end
     for iter in 1:iters+warmup
         fits = pre_fit!(fop, h_mod, epochs)
         f = fits[end]
@@ -143,7 +147,6 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         yth = get_tmp(bag.ys, eltype(init))
         wth = yth .* diff(h_obs.edges[1])
         corr = wth .- weightsnaive
-        corr[1:corcut] .= 0.
         lim = findfirst(corr .> h_mod.weights)
         if isnothing(lim)
             lim = length(corr) + 1
