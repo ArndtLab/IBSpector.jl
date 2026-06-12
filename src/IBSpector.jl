@@ -21,7 +21,6 @@ include("sequential_fit.jl")
 include("corrections.jl")
 
 export pre_fit!, demoinfer, compare_models, sample_model_epochs,
-    correctestimate!,
     get_para, evd, loglike, sds, pop_sizes, durations, times, get_covar, flags,
     adapt_histogram,
     FitResult, FitOptions, setOptimOptions!,
@@ -159,9 +158,13 @@ function adapt_histogram(segments::AbstractVector{<:Integer}; lo::Int=1, hi::Int
     append!(h_obs, segments)
     l = findlast(h_obs.weights .> tailthr)
     isnothing(l) && return h_obs
-    hi = h_obs.edges[1].edges[l+1]
-    h_obs = Histogram(CustomEdgeVector(;lo, hi, nbins))
-    append!(h_obs, segments)
+    while h_obs.edges[1].edges[l+1] < hi
+        hi = h_obs.edges[1].edges[l+1]
+        h_obs = Histogram(CustomEdgeVector(;lo, hi, nbins))
+        append!(h_obs, segments)
+        l = findlast(h_obs.weights .> tailthr)
+        isnothing(l) && return h_obs
+    end
     return h_obs
 end
 
