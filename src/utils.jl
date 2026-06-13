@@ -363,7 +363,7 @@ end
 Set the initial vector of parameters for the optimization which takes the `FitOptions` object `fop`.
 """
 function setinit!(fop::FitOptions, init::AbstractVector{<:Real})
-    setnepochs!(fop, length(init) ÷ 2)
+    @assert length(init) == npar(fop) "Length of init vector must be equal to number of parameters"
     fop.init .= init
     for i in eachindex(fop.init)
         fop.init[i] <= fop.low[i] ? fop.init[i] = fop.low[i] * 1.001 : nothing
