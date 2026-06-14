@@ -162,7 +162,7 @@ end
         ibs_segments = get_sim(TN, mu, rho)
         h = adapt_histogram(ibs_segments; nbins = 200)
         Ltot = sum(ibs_segments)
-        fop = FitOptions(Ltot, length(ibs_segments), mu, rho; maxnts = 8, force = false)
+        fop = FitOptions(Ltot, length(ibs_segments), mu, rho; maxnts = 8, force = false, locut = 1)
         fits = pre_fit!(fop, h, 8)
         nepochs = length(fits)
         bestll = argmax(i->fits[i].lp, 1:nepochs)
@@ -190,6 +190,7 @@ end
             ws = max.(0,ws)
             resid = (h.weights .- ws) ./ sqrt.(h.weights .+ ws)
             resid[ws .== 0 .& h.weights .== 0] .= 0
+            resid = resid[fop.locut:end]
             @test std(resid) - 1 < 3/sqrt(length(resid))
         end
     end
