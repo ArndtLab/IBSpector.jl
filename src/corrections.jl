@@ -47,6 +47,8 @@ Return a named tuple which contains the fields:
 - `relchange::Float64=1e-4`: The relative change in parameters to use for convergence.
   This is the maximum relative change in parameters between consecutive iterations.
   The convergence condition test this or `reltol`.
+- `th_discr::Int=800`: number of discrete points for numerical integration when
+ computing the expected weights.
 """
 function demoinfer(segments::AbstractVector{<:Integer}, epochrange::AbstractRange{<:Integer}, mu::Float64, rho::Float64;
     fop::FitOptions = FitOptions(sum(segments), length(segments), mu, rho),
@@ -97,18 +99,45 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochrange::AbstractRange{<:Integer}
     )
 end
 
+function map_fine_to_coarse(wth_fine, fine_edges, coarse_edges)
+    wth = zeros(eltype(wth_fine), length(coarse_edges) - 1)
+    k = 1  # current coarse bin index
+    for j in eachindex(wth_fine)
+        a = fine_edges[j]
+        b = fine_edges[j + 1]
+        fine_width = b - a
+        # advance coarse pointer past bins that end before this fine bin starts
+        while k <= length(wth) && coarse_edges[k + 1] <= a
+            k += 1
+        end
+        # distribute weight to all coarse bins overlapping [a, b)
+        kk = k
+        while kk <= length(wth) && coarse_edges[kk] < b
+            overlap = min(b, coarse_edges[kk + 1]) - max(a, coarse_edges[kk])
+            wth[kk] += wth_fine[j] * overlap / fine_width
+            kk += 1
+        end
+    end
+    return wth
+end
+
 function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
-    iters::Int = 20, reltol::Float64 = 1e-2, relchange::Float64=1e-4
+    iters::Int = 20, reltol::Float64 = 1e-2, relchange::Float64=1e-4,
+    th_discr::Int = 800
 ) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
     @assert !isempty(h_obs.weights) "histogram is empty"
     @assert epochs > 0 "epochrange has to be strictly positive"
     @assert iters > 0 "number of iterations has to be strictly positive"
+    @assert th_discr >= 1 "th_discr must be at least 1"
 
     h_mod = Histogram(h_obs.edges)
 
     fop = deepcopy(fop_)
-    rs = midpoints(h_obs.edges[1])
-    bag = IntegralArrays(fop.order, fop.ndt, length(rs), Val{2epochs})
+    lo_edge = h_obs.edges[1].edges[1]
+    hi_edge = h_obs.edges[1].edges[end]
+    hth = CustomEdgeVector(; lo = lo_edge, hi = hi_edge - 1, nbins = th_discr)
+    rs_th = midpoints(hth)
+    bag = IntegralArrays(fop.order, fop.ndt, length(rs_th), Val{2epochs})
 
     chain = []
     corrections = []
@@ -140,12 +169,14 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
 
         weightsnaive = integral_ws(h_obs.edges[1], fop.mu, init)
         rho = ramp(iter, fop.mu, fop.rho)
-        mldsmcp!(bag, 1:fop.order, rs, h_obs.edges[1], fop.mu, rho, init)
+        mldsmcp!(bag, 1:fop.order, rs_th, hth, fop.mu, rho, init)
 
         h_mod.weights .= h_obs.weights
 
-        yth = get_tmp(bag.ys, eltype(init))
-        wth = yth .* diff(h_obs.edges[1])
+        yth_fine = get_tmp(bag.ys, eltype(init))
+        wth_fine = yth_fine .* diff(hth)
+        wth = map_fine_to_coarse(wth_fine, hth, h_obs.edges[1])
+        yth = wth ./ diff(h_obs.edges[1])
         corr = wth .- weightsnaive
         lim = findfirst(corr .> h_mod.weights)
         if isnothing(lim)
