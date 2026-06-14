@@ -122,6 +122,8 @@ end
 function fit_model_epochs!(options::FitOptions, h::Histogram{T,1,E};
     stats = true
 ) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
+    @assert options.locut >= 1 "locut has to be at least 1"
+    @assert options.locut <= length(h.weights) "locut cannot be greater than number of bins"
     fit_model_epochs!(options, h.edges[1], h.weights, Val(isnaive(options)); stats)
 end
 

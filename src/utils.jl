@@ -257,7 +257,7 @@ recombination rate `rho` per base pair per generation.
   is set automatically.
 - `ndt::Int=0`: number of Legendre nodes to use for numerical integration.
   When zero, it is set automatically.
-- `locut::Int=1`: index of the first histogram bin to consider in the fit.
+- `locut::Int=20`: index of the first histogram bin to consider in the fit.
 """
 function FitOptions(Ltot, nhet, mu, rho;
     Tlow = 10, Tupp = 1e7,
@@ -268,7 +268,7 @@ function FitOptions(Ltot, nhet, mu, rho;
     naive::Bool = true,
     order::Int = 0,
     ndt::Int = 0,
-    locut::Int = 1
+    locut::Int = 20
 )
     N = 2nepochs
     init = zeros(N)
@@ -295,7 +295,7 @@ function FitOptions(Ltot, nhet, mu, rho;
     end
 
     solver = LBFGS()
-    maxiters = 6000
+    maxiters = 10000
     maxtime = 60
     g_tol = 5e-8
     if nhet > 1e7
@@ -358,12 +358,12 @@ end
 
 
 """
-    setinit!(fop::FitOptions, init::AbstractVector{Float64})
+    setinit!(fop::FitOptions, init::AbstractVector{<:Real})
 
 Set the initial vector of parameters for the optimization which takes the `FitOptions` object `fop`.
 """
-function setinit!(fop::FitOptions, init::AbstractVector{Float64})
-    @assert length(init) == npar(fop)
+function setinit!(fop::FitOptions, init::AbstractVector{<:Real})
+    @assert length(init) == npar(fop) "Length of init vector must be equal to number of parameters"
     fop.init .= init
     for i in eachindex(fop.init)
         fop.init[i] <= fop.low[i] ? fop.init[i] = fop.low[i] * 1.001 : nothing

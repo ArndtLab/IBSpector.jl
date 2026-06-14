@@ -1,7 +1,8 @@
 using IBSpector
 using IBSpector: npar, setinit!, initialize!, fit_model_epochs!, PInit, 
     setnepochs!, timesplitter, integral_ws, next!,
-    reset_perturb!, perturb_fit!, residstructure, compute_residuals
+    reset_perturb!, perturb_fit!, residstructure, compute_residuals,
+    correctestimate!
 using PopSim
 using HistogramBinnings
 using Distributions
@@ -72,7 +73,7 @@ end
 @testset "Test fit" begin
     h = Histogram([1,2,3,4])
     append!(h, [1,1,1,2,3,1,2])
-    fop = FitOptions(11, 7, 1.0, 1.0; order = 2, ndt = 10)
+    fop = FitOptions(11, 7, 1.0, 1.0; order = 2, ndt = 10, locut = 1)
     f = fit_model_epochs!(fop, h.edges[1], h.weights, Val(true))
     f = fit_model_epochs!(fop, h)
     @test f.converged
@@ -120,7 +121,7 @@ end
 
     fop = FitOptions(sum(ibs_segments), length(ibs_segments), mu, rho; order=2, ndt=10)
     res = demoinfer(ibs_segments, 1:length(TN)÷2, mu, rho;
-        iters = 1, nbins=10
+        iters = 1, nbins=30
     )
     @test length(res.chains) == length(TN)÷2
     @test length(res.yth) == length(TN)÷2
@@ -161,7 +162,7 @@ end
         ibs_segments = get_sim(TN, mu, rho)
         h = adapt_histogram(ibs_segments; nbins = 200)
         Ltot = sum(ibs_segments)
-        fop = FitOptions(Ltot, length(ibs_segments), mu, rho; maxnts = 8, force = false)
+        fop = FitOptions(Ltot, length(ibs_segments), mu, rho; maxnts = 8, force = false, locut = 1)
         fits = pre_fit!(fop, h, 8)
         nepochs = length(fits)
         bestll = argmax(i->fits[i].lp, 1:nepochs)
@@ -189,6 +190,7 @@ end
             ws = max.(0,ws)
             resid = (h.weights .- ws) ./ sqrt.(h.weights .+ ws)
             resid[ws .== 0 .& h.weights .== 0] .= 0
+            resid = resid[fop.locut:end]
             @test std(resid) - 1 < 3/sqrt(length(resid))
         end
     end
