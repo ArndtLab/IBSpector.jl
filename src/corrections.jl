@@ -47,8 +47,8 @@ Return a named tuple which contains the fields:
 - `relchange::Float64=1e-4`: The relative change in parameters to use for convergence.
   This is the maximum relative change in parameters between consecutive iterations.
   The convergence condition test this or `reltol`.
-- `th_discr::Int=800`: number of discrete points for numerical integration when
- computing the expected weights.
+- `th_discr::Int=fop.ndt`: number of discrete points for numerical integration when
+ computing the expected weights. Default is set automatically.
 """
 function demoinfer(segments::AbstractVector{<:Integer}, epochrange::AbstractRange{<:Integer}, mu::Float64, rho::Float64;
     fop::FitOptions = FitOptions(sum(segments), length(segments), mu, rho),
@@ -123,7 +123,7 @@ end
 
 function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     iters::Int = 20, reltol::Float64 = 1e-2, relchange::Float64=1e-4,
-    th_discr::Int = 800
+    th_discr::Int = fop_.ndt
 ) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
     @assert !isempty(h_obs.weights) "histogram is empty"
     @assert epochs > 0 "epochrange has to be strictly positive"
@@ -178,6 +178,7 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         wth = map_fine_to_coarse(wth_fine, hth, h_obs.edges[1])
         yth = wth ./ diff(h_obs.edges[1])
         corr = wth .- weightsnaive
+        corr[1:fop.locut-1] .= 0.
         lim = findfirst(corr .> h_mod.weights)
         if isnothing(lim)
             lim = length(corr) + 1
