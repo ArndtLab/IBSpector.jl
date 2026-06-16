@@ -141,7 +141,7 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
             f2 = perturb_fit!(f, fop, h; by_pass=true)
             setinit!(fop, get_para(f2))
             f = fit_model_epochs!(fop, h)
-            @assert f.lp >= fits[i-1].lp
+            @assert f.lp >= fits[i-1].lp "epoch $i"
             @assert all(!isnan, f.para) """
                 NaN parameters $(f.para)
                 $(f.lp)

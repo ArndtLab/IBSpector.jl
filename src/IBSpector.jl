@@ -144,14 +144,9 @@ with `nbins` bins. `nbins` is automatically determined by default.
 The upper limit is adapted to ensure logspacing with the requested `nbins`. The adaptive strategy is such that the
 last bin has at least `tailthr` segments.
 """
-function adapt_histogram(segments::AbstractVector{<:Integer}; lo::Int=1, hi::Int=50_000_000, nbins::Int=0, tailthr::Int=0)
-    if iszero(nbins)
-        if length(segments) > 1e7
-            nbins = 1600
-        else
-            nbins = 800
-        end
-    end
+function adapt_histogram(segments::AbstractVector{<:Integer}; 
+    lo::Int=1, hi::Int=50_000_000, nbins::Int=200, tailthr::Int=0
+)
     @assert nbins > 0
     h_obs = Histogram(CustomEdgeVector(;lo, hi, nbins))
     @assert !isempty(segments)

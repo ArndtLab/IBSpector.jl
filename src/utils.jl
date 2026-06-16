@@ -295,11 +295,11 @@ function FitOptions(Ltot, nhet, mu, rho;
     end
 
     solver = LBFGS()
-    maxiters = 10000
+    maxiters = 20000
     maxtime = 60
     g_tol = 5e-8
     if nhet > 1e7
-        maxiters = 30000
+        maxiters = 40000
         maxtime = 180
         g_tol = 1e-5
     end
