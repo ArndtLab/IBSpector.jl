@@ -117,8 +117,10 @@ end
 
 Return a named tuple of flags and diagnostics for the fit, including:
 - `converged`: whether the optimization converged
-- `convex_optimum`: whether the likelihood Hessian at the optimum
+- `convex`: whether the likelihood Hessian at the optimum
   is **strictly** positive definite.
+- `opt_flag`: whether the return optimum is a local optimum,
+  checked along the log-likelihood Hessian eigenvectors.
 - `at_any_boundary`: whether any parameter is at its lower or upper bound
 - `log_like`: the log-likelihood of the fit
 - `log_evidence`: the log-evidence of the fit
@@ -128,7 +130,8 @@ Return a named tuple of flags and diagnostics for the fit, including:
 function flags(fit::FitResult)
     return (;
         converged = fit.converged,
-        convex_optimum = fit.opt.convex_opt,
+        convex = fit.opt.convex_opt,
+        opt_flag = fit.opt.optflag,
         fit.opt.at_any_boundary,
         log_like = fit.lp,
         log_evidence = fit.logevd,
@@ -264,7 +267,7 @@ function FitOptions(Ltot, nhet, mu, rho;
     Nlow = 10, Nupp = 1e8,
     nepochs::Int = 1,
     force::Bool = true,
-    maxnts::Int = 5,
+    maxnts::Int = 10,
     naive::Bool = true,
     order::Int = 0,
     ndt::Int = 0,

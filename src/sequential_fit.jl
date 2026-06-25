@@ -116,13 +116,14 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
                     @debug ts
                     ts = sqrt.(ts[1:end-1] .* ts[2:end])
                 end
+            else
+                filter!(t->t!=0, ts)
+                push!(ts, 15.0)
+                sort!(ts)
+                unique!(ts)
+                maxnts_ = min(fop.maxnts, length(ts))
+                ts = ts[range(start=1, stop=length(ts), step=length(ts)÷maxnts_)]
             end
-            filter!(t->t!=0, ts)
-            push!(ts, 15.0)
-            sort!(ts)
-            unique!(ts)
-            maxnts_ = min(fop.maxnts, length(ts))
-            ts = ts[range(start=1, stop=length(ts), step=length(ts)÷maxnts_)]
             fs = Vector{FitResult}(undef, length(ts))
             fops = Vector{FitOptions}(undef, length(ts))
             for j in eachindex(fops)
@@ -138,17 +139,18 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
             lps = map(f->f.lp, fs)
             f = fs[argmax(lps)]
             @debug "best " ts[argmax(lps)] f.lp f.converged
-            f2 = perturb_fit!(f, fop, h; by_pass=true)
-            setinit!(fop, get_para(f2))
+            f = perturb_fit!(f, fop, h; by_pass=true)
+            p = 1 .+ (rand(length(f.para)) .- 0.5) * 0.001
+            setinit!(fop, get_para(f) .* p) # perturb slightly to avoid linesearch failure
             f = fit_model_epochs!(fop, h)
-            @assert f.lp >= fits[i-1].lp "epoch $i"
+            @assert (f.lp >= fits[i-1].lp) || (!f.converged) "epoch $i ll not improved. Please report an issue"
             @assert all(!isnan, f.para) """
                 NaN parameters $(f.para)
                 $(f.lp)
                 $(f.opt.init)
                 $(fop.upp)
                 $(fs[argmax(lps)])
-                $(f2.para)
+                $(f.para)
             """
         end
         push!(fits, f)
