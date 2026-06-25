@@ -200,6 +200,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, edges, 
     logevidence = -Inf
     marglike = 0
     convex_opt = false
+    optflag = true
     if stats && isreal(lambdas)
         lambdas = real.(lambdas)
         if all(lambdas .> 0)
@@ -212,8 +213,11 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, edges, 
         stderrors = sqrt.(vars_)
 
         # assuming uniform prior on N and T and separability of the likelihood
-        ci_low, ci_high, marglike = slice(para, eigen_problem.vectors, edges, counts, options)
+        ci_low, ci_high, marglike, optflag = slice(para, eigen_problem.vectors, edges, counts, options)
         logevidence = lp + sum(log.(1.0 ./ (options.upp .- options.low))) + log(marglike)
+        if !optflag || isinf(logevidence)
+            logevidence = -Inf
+        end
     end
 
     FitResult(
@@ -233,7 +237,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, edges, 
             at_uboundary, at_lboundary,
             options.low, options.upp, options.init,
             ci_low, ci_high,
-            convex_opt, marglike,
+            convex_opt, marglike, optflag,
             hess)
     )
 end
@@ -306,6 +310,7 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
 )
     ll_hat = llike(edges, counts, options.mu, options.locut, TN)
     ll_threshold = ll_hat - 2
+    optflag = true
     marglike = 1.0
     offset_low  = zeros(length(TN))
     offset_high = zeros(length(TN))
@@ -326,10 +331,13 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
             if ll >= ll_threshold
                 lambda_pos = lambdas[j]
             end
+            if ll > ll_hat + 0.1 # 10% tolerance
+                optflag = false
+            end
             if j > 1
                 dx = lambdas[j] - lambdas[j-1]
             end
-            if all(v .>= options.low) && all(v .<= options.upp)
+            if all(v .> options.low) && all(v .< options.upp)
                 sum += (exp(ll - ll_hat) + exp(llp - ll_hat))/2 * dx
             end
             llp = ll
@@ -346,10 +354,13 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
             if ll >= ll_threshold
                 lambda_neg = lambdas[j]
             end
+            if ll > ll_hat + 0.1
+                optflag = false
+            end
             if j > 1
                 dx = lambdas[j] - lambdas[j-1]
             end
-            if all(v .>= options.low) && all(v .<= options.upp)
+            if all(v .> options.low) && all(v .< options.upp)
                 sum += (exp(ll - ll_hat) + exp(llp - ll_hat))/2 * dx
             end
             llp = ll
@@ -373,5 +384,5 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
     # clamp final bounds to parameter space
     q_low  = clamp.(TN .+ offset_low,  options.low, options.upp)
     q_high = clamp.(TN .+ offset_high, options.low, options.upp)
-    return q_low, q_high, marglike
+    return q_low, q_high, marglike, optflag
 end
