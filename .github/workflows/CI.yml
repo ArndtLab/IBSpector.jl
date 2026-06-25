@@ -42,7 +42,7 @@ jobs:
       - uses: julia-actions/julia-buildpkg@v1
       - uses: julia-actions/julia-runtest@v1
         env: 
-          JULIA_NUM_THREADS: 8
+          JULIA_NUM_THREADS: 2
   docs:
     name: Documentation
     runs-on: ubuntu-latest
