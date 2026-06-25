@@ -79,6 +79,7 @@ end
     f = fit_model_epochs!(fop, h.edges[1], h.weights, Val(true))
     f = fit_model_epochs!(fop, h)
     @test f.converged
+    @test f.opt.optflag
     perturb_fit!(f, fop, h)
     IBSpector.setnaive!(fop, false)
     IBSpector.setOptimOptions!(fop, g_tol=1e-3)
@@ -163,7 +164,7 @@ if LOCAL
     @testset "fitting procedure" begin
         @testset "exhaustive pre-fit $(length(TN)÷2) epochs,  mu $mu, rho $rho" for (mu,rho,TN) in itr
             ibs_segments = get_sim(TN, mu, rho)
-            h = adapt_histogram(ibs_segments; nbins = 120)
+            h = adapt_histogram(ibs_segments)
             Ltot = sum(ibs_segments)
             fop = FitOptions(Ltot, length(ibs_segments), mu, rho; maxnts = 8, force = false, locut = 1)
             fits = pre_fit!(fop, h, 8)
@@ -177,7 +178,7 @@ if LOCAL
         @testset "Iterative fit" begin
             mu, rho, TN = mus[1], rhos[1], TNs[3]
             ibs_segments = get_sim(TN, mu, rho)
-            h = adapt_histogram(ibs_segments; nbins = 120)
+            h = adapt_histogram(ibs_segments)
             Ltot = sum(ibs_segments)
             fop = FitOptions(Ltot, length(ibs_segments), mu, rho)
             pfits = pre_fit!(fop, h, 5)
