@@ -55,7 +55,7 @@ Compute the residuals between the observed and expected weights.
   plus one.
 - `ndt::Int=800`: number of Legendre nodes to use when `naive` is false.
 """
-function compute_residuals(h::Histogram, mu::Float64, rho::Float64, TN::Vector; 
+function compute_residuals(h::Histogram, mu::Real, rho::Real, TN::Vector; 
     naive=true, order=10, ndt=800
 )
     if naive

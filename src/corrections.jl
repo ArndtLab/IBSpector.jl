@@ -129,6 +129,9 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     @assert epochs > 0 "epochrange has to be strictly positive"
     @assert iters > 0 "number of iterations has to be strictly positive"
     @assert th_discr >= 1 "th_discr must be at least 1"
+    if fop_.mu < fop_.rho
+        @warn "the method is currently designed for mu >= rho, results may be biased"
+    end
 
     h_mod = Histogram(h_obs.edges)
 
@@ -148,7 +151,7 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     h_mod.weights .= h_obs.weights
     corr = zeros(Float64, length(h_obs.weights))
     conv = false
-    warmup = 100
+    warmup = 1
     for i in 100:-1:2
         nx = ramp(i, fop.mu, fop.rho)
         if nx != ramp(i-1, fop.mu, fop.rho)
@@ -167,16 +170,20 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         push!(chain, f)
         push!(corrections, corr)
 
-        weightsnaive = integral_ws(h_obs.edges[1], fop.mu, init)
         rho = ramp(iter, fop.mu, fop.rho)
         mldsmcp!(bag, 1:fop.order, rs_th, hth, fop.mu, rho, init)
-
-        h_mod.weights .= h_obs.weights
-
         yth_fine = get_tmp(bag.ys, eltype(init))
         wth_fine = yth_fine .* diff(hth)
         wth = map_fine_to_coarse(wth_fine, hth, h_obs.edges[1])
         yth = wth ./ diff(h_obs.edges[1])
+
+        ll = llsmcp(wth, h_obs.weights, fop.locut)
+        push!(lls, ll)
+        push!(yths, copy(yth))
+
+        h_mod.weights .= h_obs.weights
+
+        weightsnaive = integral_ws(h_obs.edges[1], fop.mu, init)
         corr = wth .- weightsnaive
         corr[1:fop.locut-1] .= 0.
         lim = findfirst(corr .> h_mod.weights)
@@ -190,9 +197,6 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         @assert all(isfinite, h_mod.weights)
         @assert all(!isnan, h_mod.weights)
 
-        ll = llsmcp(wth, h_obs.weights, fop.locut)
-        push!(lls, ll)
-        push!(yths, copy(yth))
         if iter > warmup
             deltaw = (yths[iter] .- yths[iter-1]) .* diff(h_obs.edges[1])
             delta = maximum(abs.(deltaw))
