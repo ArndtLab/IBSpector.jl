@@ -1,3 +1,8 @@
 /Manifest.toml
+/test/Manifest.toml
 /docs/Manifest.toml
 /docs/build/
+.DS_Store
+/results/
+/bench/
+/docs/superpowers/
