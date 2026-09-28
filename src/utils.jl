@@ -178,7 +178,7 @@ function Base.getindex(lb::LBound, i::Int)
         return lb.Nlow
     else
         j = (lb.pars - i) ÷ 2 + 1
-        return lb.Tlow ^ min(j, 3)
+        return lb.Tlow
     end
 end
 
@@ -227,6 +227,7 @@ mutable struct FitOptions
     nfin::Int
     ntail::Int
     locut::Int
+    diffcache
 end
 
 function Base.show(io::IO, fop::FitOptions)
@@ -255,13 +256,13 @@ recombination rate `rho` per base pair per generation.
 - `Tlow::Number=10`, `Tupp::Number=1e7`: The lower and upper bounds for the duration of epochs.
 - `Nlow::Number=10`, `Nupp::Number=1e8`: The lower and upper bounds for the population sizes.
 - `force::Bool=true`: if true try to fit further epochs even when no signal is found.
-- `maxnts::Int=5`: The maximum number of new time splits to consider when adding a new epoch.
+- `maxnts::Int=10`: The maximum number of new time splits to consider when adding a new epoch.
   Higher is greedier.
 - `msub::Int=0`: Gauss-Legendre nodes per sub-panel in the time quadrature.
 - `nfin::Int=0`: sub-panels per finite epoch.
 - `ntail::Int=0`: sub-panels in the semi-infinite tail.
   Each of the three takes the `TimeGrid` default when zero.
-- `locut::Int=20`: index of the first histogram bin to consider in the fit.
+- `locut::Int=1`: index of the first histogram bin to consider in the fit.
 """
 function FitOptions(Ltot, nhet, mu, rho;
     Tlow = 10, Tupp = 1e7,
@@ -273,7 +274,7 @@ function FitOptions(Ltot, nhet, mu, rho;
     msub::Int = 0,
     nfin::Int = 0,
     ntail::Int = 0,
-    locut::Int = 20
+    locut::Int = 1
 )
     N = 2nepochs
     init = zeros(N)
@@ -295,7 +296,7 @@ function FitOptions(Ltot, nhet, mu, rho;
     maxtime = 60
     g_tol = 5e-8
     if nhet > 1e7
-        maxiters = 60000
+        maxiters = 80000
         maxtime = 180
         g_tol = 1e-5
     end
@@ -319,7 +320,8 @@ function FitOptions(Ltot, nhet, mu, rho;
         msub,
         nfin,
         ntail,
-        locut
+        locut,
+        nothing
     )
 end
 
@@ -353,6 +355,7 @@ function initialize!(fop::FitOptions, weights::AbstractVector{<:Integer})
     return nothing
 end
 
+import .Spectra.SMCpIntegrals: TIMEGRID_DEFAULTS
 
 """
     setinit!(fop::FitOptions, init::AbstractVector{<:Real})
@@ -365,6 +368,17 @@ function setinit!(fop::FitOptions, init::AbstractVector{<:Real})
     for i in eachindex(fop.init)
         fop.init[i] <= fop.low[i] ? fop.init[i] = fop.low[i] * 1.001 : nothing
         fop.init[i] >= fop.upp[i] ? fop.init[i] = fop.upp[i] * 0.999 : nothing
+    end
+    if !isnaive(fop)
+        fmin = TIMEGRID_DEFAULTS.fmin
+        delta_max = 17
+        frac = (1 − fmin^(1/fop.nfin))
+        for i in 3:2:length(fop.init)-1
+            delta = fop.init[i] / 2fop.init[i+1] * frac
+            if delta > delta_max
+                fop.init[i] = 2fop.init[i+1] * delta_max * 0.99 / frac
+            end
+        end
     end
     return nothing
 end
@@ -390,7 +404,6 @@ function set_perturb!(fop::FitOptions, fit::FitResult)
     for i in eachindex(fop.perturb)
         fop.perturb[i] = fit.opt.at_lboundary[i] || 
             (fit.opt.at_uboundary[i] && i > 1) ||
-            isinf(evd(fit)) ||
             !fit.converged
     end
 end
@@ -400,33 +413,74 @@ function reset_perturb!(fop::FitOptions)
     fop.delta.state = 0
 end
 
-struct PInit <: AbstractVector{Float64}
-    fop::FitOptions
-end
+# struct PInit <: AbstractVector{Float64}
+#     fop::FitOptions
+# end
 
-Base.size(p::PInit) = (npar(p.fop),)
+# Base.size(p::PInit) = (npar(p.fop),)
 
 getdelta(fop::FitOptions) = fop.delta.factors[fop.delta.state]
 
-function Base.getindex(p::PInit, i::Int)
-    if !p.fop.perturb[i]
-        return p.fop.init[i]
-    else
-        dl = getdelta(p.fop)
-        low = p.fop.low[i]
-        upp = p.fop.upp[i]
+# function Base.getindex(p::PInit, i::Int)
+#     if !p.fop.perturb[i]
+#         return p.fop.init[i]
+#     else
+#         dl = getdelta(p.fop)
+#         low = p.fop.low[i]
+#         upp = p.fop.upp[i]
+#         if dl < 1
+#             return rand(
+#                 truncated(
+#                     LogNormal(log(p.fop.init[i]), dl),
+#                     low,
+#                     upp
+#                 )
+#             )
+#         else
+#             return rand(Uniform(low, upp))
+#         end
+#     end
+# end
+
+# this can give an init that fires the NaN in the smc' branch
+# it is currently used only for the Laplace, will need adaptation
+# for future expansion
+function getPinit(fop)
+    pinit = similar(fop.init)
+    dl = getdelta(fop)
+    for i in 2:2:length(fop.init)
         if dl < 1
-            return rand(
+            T = rand(
                 truncated(
-                    LogNormal(log(p.fop.init[i]), dl),
-                    low,
-                    upp
+                    LogNormal(log(fop.init[i-1]), dl),
+                    fop.low[i-1],
+                    fop.upp[i-1]
+                )
+            )
+            N = rand(
+                truncated(
+                    LogNormal(log(fop.init[i]), dl),
+                    fop.low[i],
+                    fop.upp[i]
                 )
             )
         else
-            return rand(Uniform(low, upp))
+            T = rand(Uniform(fop.low[i-1], fop.upp[i-1]))
+            N = rand(Uniform(fop.low[i], fop.upp[i]))
+        end
+        if fop.perturb[i-1]
+            N = fop.init[i] * T / fop.init[i-1]
+            pinit[i-1] = T
+            pinit[i] = N
+        elseif fop.perturb[i]
+            pinit[i-1] = fop.init[i-1]
+            pinit[i] = N
+        else
+            pinit[i-1] = fop.init[i-1]
+            pinit[i] = fop.init[i]
         end
     end
+    return pinit
 end
 
 function isnaive(fop::FitOptions)
