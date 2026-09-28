@@ -11,7 +11,6 @@ using Random
 using Base.Threads
 using Logging
 using PreallocationTools
-using MvNormalCDF
 
 include("Spectra/Spectra.jl")
 using .Spectra
@@ -53,18 +52,28 @@ Compute the residuals between the observed and expected weights.
   probabilities from SMC' theory.
 - `msub::Int=0`, `nfin::Int=0`, `ntail::Int=0`: the time-quadrature sub-panel
   counts used when `naive` is false. Each takes the `TimeGrid` default when zero.
+- `finebins::Int=800`: the number of discretization points used to compute 
+  the expected weights by numerical integration when `naive` is false.
 """
 function compute_residuals(h::Histogram, mu::Real, rho::Real, TN::Vector;
-    naive=true, msub=0, nfin=0, ntail=0
+    naive=true, msub=0, nfin=0, ntail=0, finebins=800
 )
     if naive
         w_th = integral_ws(h.edges[1], mu, TN)
     else
-        rs = midpoints(h.edges[1])
+        if finebins > length(h.weights)
+            lo_edge = h.edges[1].edges[1]
+            hi_edge = h.edges[1].edges[end]
+            eth = CustomEdgeVector(; lo = lo_edge, hi = hi_edge - 1, nbins = finebins)
+        else
+            eth = h.edges[1]
+        end
+        rs = midpoints(eth)
         K = length(TN) ÷ 2
-        bag = IntegralArrays(timegrid(K; msub, nfin, ntail), length(rs), Val{length(TN)})
-        mldsmcp!(bag, rs, h.edges[1].edges, mu, rho, TN)
-        w_th = get_tmp(bag.ys, eltype(TN)) .* diff(h.edges[1])
+        bag = IntegralArrays(timegrid(K; msub, nfin, ntail), length(h.weights), rs, eth, Val{length(TN)})
+        mldsmcp!(bag, mu, rho, TN)
+        map_fine_to_coarse!(bag, h.edges[1].edges, eltype(TN))
+        w_th = get_tmp(bag.wcoarse, eltype(TN))
     end
     residuals = (h.weights .- w_th) ./ sqrt.(w_th)
     @assert all(isfinite.(residuals))
@@ -123,7 +132,7 @@ function residstructure(w_true::AbstractVector{<:Real}, w_pred::AbstractVector{<
     return resid, resid_hi, resid_lo, resid_hifam, resid_lofam
 end
 
-function CustomEdgeVector(; lo = 1, hi = 10, nbins::Integer)
+function CustomEdgeVector(; lo = 1, hi = 10, nbins::Integer=200)
     @assert (lo > 0) && (hi > 0) && (nbins > 0) && (hi > lo)
     lo = floor(Int, lo)
     hi = ceil(Int, hi)
