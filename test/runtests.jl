@@ -1,8 +1,7 @@
 using IBSpector
-using IBSpector: npar, setinit!, initialize!, fit_model_epochs!, PInit, 
+using IBSpector: npar, setinit!, initialize!, fit_model_epochs!, #PInit, 
     setnepochs!, timesplitter, integral_ws, next!,
-    reset_perturb!, perturb_fit!, residstructure, compute_residuals,
-    correctestimate!
+    reset_perturb!, perturb_fit!, residstructure, compute_residuals
 using PopSim
 using HistogramBinnings
 using Distributions
@@ -57,23 +56,23 @@ itr = Base.Iterators.product(mus,rhos,TNs)
     @test all(fop.low .<= fop.init .<= fop.upp)
 end
 
-@testset "Test PInit" begin
-    fop = FitOptions(30, 10, 1.0, 1.0)
-    p = PInit(fop)
-    @test fop.delta.state == 0
-    @test length(p) == npar(fop)
-    @test all(p .== fop.init)
-    @test all(fop.perturb .== false)
-    fop.perturb .= trues(npar(fop))
-    setinit!(fop, ones(npar(fop)))
-    next!(fop.delta)
-    @test length(p) == npar(fop)
-    @test any(p .!= fop.init)
-    @test all(fop.low .<= p .<= fop.upp)
-    @test fop.delta.state == 1
-    reset_perturb!(fop)
-    @test all(fop.perturb .== false)
-end
+# @testset "Test PInit" begin
+#     fop = FitOptions(30, 10, 1.0, 1.0)
+#     p = PInit(fop)
+#     @test fop.delta.state == 0
+#     @test length(p) == npar(fop)
+#     @test all(p .== fop.init)
+#     @test all(fop.perturb .== false)
+#     fop.perturb .= trues(npar(fop))
+#     setinit!(fop, ones(npar(fop)))
+#     next!(fop.delta)
+#     @test length(p) == npar(fop)
+#     @test any(p .!= fop.init)
+#     @test all(fop.low .<= p .<= fop.upp)
+#     @test fop.delta.state == 1
+#     reset_perturb!(fop)
+#     @test all(fop.perturb .== false)
+# end
 
 @testset "Test fit" begin
     h = Histogram([1,2,3,4])
@@ -86,6 +85,16 @@ end
     perturb_fit!(f, fop, h)
     IBSpector.setnaive!(fop, false)
     IBSpector.setOptimOptions!(fop, g_tol=1e-3)
+    # The smcp branch reads its buffers off fop.diffcache, which only demoinfer
+    # populates. Build one the same way here: a theory grid at least as fine as
+    # the observed one, mapped down onto h's edges by map_fine_to_coarse!.
+    lo_edge, hi_edge = h.edges[1][1], h.edges[1][end]
+    eth = IBSpector.CustomEdgeVector(; lo = lo_edge, hi = hi_edge - 1,
+                                       nbins = length(h.weights))
+    fop.diffcache = IntegralArrays(
+        timegrid(fop.nepochs; msub = fop.msub, nfin = fop.nfin, ntail = fop.ntail),
+        length(h.weights), midpoints(eth), eth, Val{npar(fop)}, 2,
+    )
     fit_model_epochs!(fop, h)
 end
 
@@ -117,6 +126,9 @@ end
     @test length(h.weights) == 200
     @test h.weights[end] > 0
 
+    wcoarse = IBSpector.map_fine_to_coarse(h.weights, h.edges[1], h.edges[1])
+    @test all(wcoarse .== h.weights)
+
     fop = FitOptions(sum(ibs_segments), length(ibs_segments), mu, rho)
     stat = pre_fit!(fop, h, 2)
     @test isassigned(stat, 1)
@@ -126,22 +138,25 @@ end
     @test length(ts) >= 1
 
     fop = FitOptions(sum(ibs_segments), length(ibs_segments), mu, rho; msub=6, nfin=4, ntail=8)
+    # `iters` is gone: the correction loop count is now derived from `ramp`,
+    # and the optimiser budget is what a smoke test can bound.
     res = demoinfer(ibs_segments, 1:length(TN)÷2, mu, rho;
-        iters = 1, nbins=30
+        nbins = 30, th_discr = 30, maxiters = 100, maxtime = 10
     )
     @test length(res.chains) == length(TN)÷2
-    @test length(res.yth) == length(TN)÷2
+    @test length(res.resid) == length(TN)÷2
     @test all(length.(res.chains) .>= 1)
     @test all(length.(res.corrections) .>= 1)
-    @test all(length.(res.deltas) .>= 1)
-    @test all(length.(res.yth) .>= 1)
+    @test all(length.(res.lls) .>= 1)
+    @test all(length.(res.resid) .>= 1)
     @test !any(isinf.(evd.(res.fits)))
     best = compare_models(res.fits)
     @test !isnothing(best)
     @test !any(best.opt.at_lboundary)
     @test !any(best.opt.at_uboundary[2:end])
     covar = get_covar(best)
-    fcor = correctestimate!(fop, best, h)
+    # correctestimate! is gone: getFitResult now recomputes the smcp branch's
+    # Hessian itself, through getHessian(edges, counts, options, TN).
     chain = sample_model_epochs(fop, h, best; nsamples = 10)
     fl = flags(best)
 

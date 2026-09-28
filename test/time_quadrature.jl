@@ -188,14 +188,14 @@ end
     edges = collect(Float64, ev); rs = collect(Float64, midpoints(ev))
     grid = TimeGrid(K; msub = 8, nfin = 4, ntail = 8)
 
-    bagf = IntegralArrays(grid, length(rs), Val{length(TN)})
+    bagf = IntegralArrays(grid, length(rs), rs, edges, Val{length(TN)})
     @test bagf.n_dt == ndt(grid)
 
     # npicard = 6 (the design-target rule for this alpha) only contracts the
     # error to ~3e-3 by the fixed exponential-Euler bin count here; np = 25
     # drives the Picard iteration itself well under the 1e-6 bound, confirming
     # fused and order-loop converge to the same integral.
-    SMCp.fusedsweep!(bagf, rs, edges, mu, rho, TN; npicard = 25)
+    SMCp.fusedsweep!(bagf, mu, rho, TN; npicard = 25)
     yf = copy(get_tmp(bagf.ys, Float64))
     yo = orderref(rs, edges, mu, rho, grid, TN, 60)
 
@@ -283,13 +283,13 @@ end
     # Poisson counts from the model itself, so the surface has a real optimum
     Random.seed!(20260819)
     grid = TimeGrid(K)
-    bag = IntegralArrays(grid, length(rs), Val{K * 2}, 3)
-    SMCp.fusedsweep!(bag, rs, edges, mu, rho, TN)
+    bag = IntegralArrays(grid, length(rs), rs, edges, Val{K * 2}, 3)
+    SMCp.fusedsweep!(bag, mu, rho, TN)
     w0 = get_tmp(bag.ys, Float64) .* diff(edges)
     counts = [rand(Poisson(max(w, 0.0))) for w in w0]
 
     function f(v)
-        SMCp.fusedsweep!(bag, rs, edges, mu, rho, v)
+        SMCp.fusedsweep!(bag, mu, rho, v)
         w = get_tmp(bag.ys, eltype(v)) .* diff(edges)
         s = zero(eltype(v))
         for i in eachindex(counts)
@@ -352,12 +352,12 @@ end
     ev = IBSpector.CustomEdgeVector(lo = 1, hi = 3_000_000, nbins = 200)
     edges = collect(Float64, ev); rs = collect(Float64, IBSpector.midpoints(ev))
     grid = TimeGrid(K)
-    bag = IntegralArrays(grid, length(rs), Val{K * 2}, 3)
-    SMCp.fusedsweep!(bag, rs, edges, 1.0e-8, 2.0e-8, TN)          # warm up
-    @test (@allocated SMCp.fusedsweep!(bag, rs, edges, 1.0e-8, 2.0e-8, TN)) == 0
+    bag = IntegralArrays(grid, length(rs), rs, edges, Val{K * 2}, 3)
+    SMCp.fusedsweep!(bag, 1.0e-8, 2.0e-8, TN)          # warm up
+    @test (@allocated SMCp.fusedsweep!(bag, 1.0e-8, 2.0e-8, TN)) == 0
 
     # and under ForwardDiff, where the DiffCache buffers have to be reused too
-    f(v) = (SMCp.fusedsweep!(bag, rs, edges, 1.0e-8, 2.0e-8, v);
+    f(v) = (SMCp.fusedsweep!(bag, 1.0e-8, 2.0e-8, v);
             sum(get_tmp(bag.ys, eltype(v))))
     TNd = [ForwardDiff.Dual{Nothing}(v, 0.0, 0.0, 0.0) for v in TN]
     f(TNd)                                                         # warm up
@@ -377,8 +377,8 @@ end
 
     function sweepat(msub, nfin, ntail)
         g = TimeGrid(K; msub, nfin, ntail)
-        bag = IntegralArrays(g, length(rs), Val{length(TN)})
-        SMCp.fusedsweep!(bag, rs, edges, mu, rho, TN)
+        bag = IntegralArrays(g, length(rs), rs, edges, Val{length(TN)})
+        SMCp.fusedsweep!(bag, mu, rho, TN)
         copy(get_tmp(bag.ys, Float64))
     end
 

@@ -154,18 +154,18 @@ end
         rho = mu * ratio
         np = getnpicard(mu, rho)
 
-        bag = IntegralArrays(grid, length(rs), Val{length(TN)})
-        fusedsweep!(bag, rs, edges, mu, rho, TN)
+        bag = IntegralArrays(grid, length(rs), rs, edges, Val{length(TN)})
+        fusedsweep!(bag, mu, rho, TN)
         auto = copy(get_tmp(bag.ys, eltype(TN)))
         @test auto ≈ rawfused(rs, edges, mu, rho, grid, TN, np)
 
         # an explicit npicard overrides the rule
-        fusedsweep!(bag, rs, edges, mu, rho, TN; npicard = 6)
+        fusedsweep!(bag, mu, rho, TN; npicard = 6)
         @test get_tmp(bag.ys, eltype(TN)) ≈ rawfused(rs, edges, mu, rho, grid, TN, 6)
 
         # calling twice with the same arguments must give the same answer:
         # A and MJ have to be reset, not carried between calls
-        fusedsweep!(bag, rs, edges, mu, rho, TN)
+        fusedsweep!(bag, mu, rho, TN)
         @test get_tmp(bag.ys, eltype(TN)) ≈ auto
     end
 end
@@ -181,22 +181,24 @@ end
     # comparable.
     grid = TimeGrid(length(TN) ÷ 2)
 
+    # mldsmcp and mldsmcp! both return per-bin WEIGHTS; fusedsweep! leaves the
+    # density in bag.ys, so the two differ by exactly one bin width.
     got = mldsmcp(rs, edges, mu, rho, TN)
-    bag = IntegralArrays(grid, length(rs), Val{length(TN)})
-    fusedsweep!(bag, rs, edges, mu, rho, TN)
-    @test got ≈ get_tmp(bag.ys, eltype(TN))
+    bag = IntegralArrays(grid, length(rs), rs, edges, Val{length(TN)})
+    fusedsweep!(bag, mu, rho, TN)
+    @test got ≈ get_tmp(bag.ys, eltype(TN)) .* diff(edges)
 
     # the mutating entry is the same computation
-    bag3 = IntegralArrays(grid, length(rs), Val{length(TN)})
-    mldsmcp!(bag3, rs, edges, mu, rho, TN)
+    bag3 = IntegralArrays(grid, length(rs), rs, edges, Val{length(TN)})
+    mldsmcp!(bag3, mu, rho, TN)
     @test get_tmp(bag3.ys, eltype(TN)) == got
 
     # explicit sub-panel counts reach the constructor
     g2 = TimeGrid(length(TN) ÷ 2; msub = 10, nfin = 2, ntail = 8)
-    bag2 = IntegralArrays(g2, length(rs), Val{length(TN)})
-    fusedsweep!(bag2, rs, edges, mu, rho, TN)
+    bag2 = IntegralArrays(g2, length(rs), rs, edges, Val{length(TN)})
+    fusedsweep!(bag2, mu, rho, TN)
     @test mldsmcp(rs, edges, mu, rho, TN; msub = 10, nfin = 2, ntail = 8) ≈
-          get_tmp(bag2.ys, eltype(TN))
+          get_tmp(bag2.ys, eltype(TN)) .* diff(edges)
 end
 
 # max |z| over bins that would survive adapt_histogram's tail threshold. The
@@ -205,7 +207,10 @@ end
 function maxz(rs, edges, mu, rho, TN; reford = 200, tailthr = 10)
     grid = TimeGrid(length(TN) ÷ 2)
     ref = orderref(rs, edges, mu, rho, grid, TN, reford)
-    got = mldsmcp(rs, edges, mu, rho, TN)
+    # orderref is a density, as fusedsweep! leaves it; mldsmcp returns weights.
+    # Divide the width back out so the thresholds below keep measuring the
+    # quantity they were calibrated on (§7.3).
+    got = mldsmcp(rs, edges, mu, rho, TN) ./ diff(edges)
     keep = findall(ref .> tailthr)
     @assert length(keep) > 100
     maximum(abs.(got[keep] .- ref[keep]) ./ sqrt.(ref[keep]))
@@ -267,8 +272,8 @@ end
     grid = TimeGrid(length(TN0) ÷ 2; msub = 8, nfin = 2, ntail = 8)
 
     function total(TN)
-        bag = IntegralArrays(grid, length(rs), Val{length(TN)})
-        fusedsweep!(bag, rs, edges, mu, rho, TN)
+        bag = IntegralArrays(grid, length(rs), rs, edges, Val{length(TN)})
+        fusedsweep!(bag, mu, rho, TN)
         sum(get_tmp(bag.ys, eltype(TN)))
     end
 
