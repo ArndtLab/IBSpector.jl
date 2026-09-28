@@ -1,5 +1,31 @@
-function getHessian(m::Turing.Optimisation.ModeResult; kwargs...)
-    return Turing.Optimisation.StatsBase.informationmatrix(m; kwargs...)
+function getHessian(edges::AbstractVector{<:Integer},
+    counts::AbstractVector{<:Integer},
+    options::FitOptions, TN::AbstractVector{<:Real}
+)
+    return getHessian(edges, counts, options, TN, Val(isnaive(options)))
+end
+
+function getHessian(edges::AbstractVector{<:Integer},
+    counts::AbstractVector{<:Integer},
+    options::FitOptions, TN::AbstractVector{<:Real}, ::Val{true}
+)
+    # information matrix is the negative Hessian of the log-likelihood
+    return ForwardDiff.hessian(
+        x -> -llike(edges, counts, options.mu, options.locut, x),
+        TN
+    )
+end
+
+function getHessian(edges::AbstractVector{<:Integer},
+    counts::AbstractVector{<:Integer},
+    options::FitOptions, TN::AbstractVector{<:Real}, ::Val{false}
+)
+    # information matrix is the negative Hessian of the log-likelihood
+    return ForwardDiff.hessian(
+        x -> -llsmcp!(options.diffcache, edges, counts,
+            options.mu, options.rho, options.locut, x),
+        TN
+    )
 end
 
 # models
@@ -21,7 +47,8 @@ end
             # space, using Bijectors.
             # I could not find a mwe, (TODO: find one)
             # probably out of domain, apply a penalty
-            m = 0
+            @addlogprob!(-Inf)
+            return
         end
         @inbounds counts[i] ~ Poisson(m)
     end
@@ -45,38 +72,15 @@ function llike(edges::AbstractVector{<:Integer},
     return ll
 end
 
-# unused
-@model function model_corrected(edges::AbstractVector{<:Integer}, 
-    counts::AbstractVector{<:Integer}, mu::Float64, rate::Float64, locut::Int,
-    TNdists::Vector{<:Distribution}, corrections::AbstractVector{<:Real}
-)
-    TN ~ product_distribution(TNdists)
-    a = 0.5
-    last_hid_I = firstorderint(edges[locut] - a, rate, TN) * 2 * mu^2 * TN[1] / rate
-    for i in locut:length(counts)
-        @inbounds this_hid_I = firstorderint(edges[i+1] - a, rate, TN) * 2 * mu^2 * TN[1] / rate
-        m = this_hid_I - last_hid_I
-        last_hid_I = this_hid_I
-        if (m < 0) || isnan(m)
-            # this happens when evaluating the model
-            # after optimization, in the unconstrained
-            # space, using Bijectors.
-            # I could not find a mwe, (TODO: find one)
-            # probably out of domain, apply a penalty
-            m = 0
-        end
-        @inbounds counts[i] ~ Poisson(m + corrections[i])
-    end
-end
-
-@model function modelsmcp!(dc::IntegralArrays, rs::AbstractVector{<:Real}, 
-    edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer},
+@model function modelsmcp!(dc::IntegralArrays, edges::AbstractVector{<:Integer},
+    counts::AbstractVector{<:Integer},
     mu::Float64, rho::Float64, locut::Int, TNdists::Vector{<:Distribution}
 )
     TN ~ product_distribution(TNdists)
-    mldsmcp!(dc, 1:dc.order, rs, edges, mu, rho, TN)
-    m = get_tmp(dc.ys, eltype(TN))
-    m .*= diff(edges)
+    mldsmcp!(dc, mu, rho, TN)
+    map_fine_to_coarse!(dc, edges, eltype(TN))
+    m = get_tmp(dc.wcoarse, eltype(TN))
+    @assert length(m) == length(counts)
     for i in locut:length(counts)
         if (m[i] < 0) || isnan(m[i])
             # this happens when evaluating the model
@@ -84,24 +88,29 @@ end
             # space, using Bijectors.
             # I could not find a mwe, (TODO: find one)
             # probably out of domain, apply a penalty
-            m[i] = 0
+            # for this branch (smcp) it can also occur
+            # for epochs with large cumulative coalescence
+            # i.e. long and small Ne
+            @addlogprob!(-Inf)
+            return
         end
         @inbounds counts[i] ~ Poisson(m[i])
     end
 end
 
-function llsmcp!(dc::IntegralArrays, rs::AbstractVector{<:Real}, 
-    edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer},
+function llsmcp!(dc::IntegralArrays, edges::AbstractVector{<:Integer},
+    counts::AbstractVector{<:Integer},
     mu::Float64, rho::Float64, locut::Int, TN::AbstractVector{<:Real}
 )
-    mldsmcp!(dc, 1:dc.order, rs, edges, mu, rho, TN)
-    ws = get_tmp(dc.ys, eltype(TN)) .* diff(edges)
-    return llsmcp(ws, counts, locut)
+    mldsmcp!(dc, mu, rho, TN)
+    map_fine_to_coarse!(dc, edges, eltype(TN))
+    return llsmcp(get_tmp(dc.wcoarse, eltype(TN)), counts, locut)
 end
 
 function llsmcp(ws::AbstractVector{<:Real}, counts::AbstractVector{<:Integer},
     locut::Int
 )
+    @assert length(ws) == length(counts)
     ll = 0
     for i in locut:length(counts)
         if (ws[i] < 0) || isnan(ws[i])
@@ -110,7 +119,15 @@ function llsmcp(ws::AbstractVector{<:Real}, counts::AbstractVector{<:Integer},
             # space, using Bijectors.
             # I could not find a mwe, (TODO: find one)
             # probably out of domain, apply a penalty
-            ws[i] = 0
+            #
+            # `-Inf * one(eltype(ws))`, not a bare `-Inf`: under ForwardDiff a
+            # bare Float64 return makes the function type-unstable, and the
+            # partials are extracted as ZERO rather than propagated. The
+            # gradient is then exactly 0, which satisfies any `g_tol`, and
+            # LBFGS reports `converged = true` at iteration 0 on a point it
+            # could not evaluate. Preserving the type gives NaN partials
+            # instead, so the convergence test can never fire here.
+            return -Inf * one(eltype(ws))
         end
         @inbounds ll += logpdf(Poisson(ws[i]),counts[i])
     end
@@ -147,7 +164,6 @@ function fit_model_epochs!(
     return getFitResult(mle, options, edges, counts; stats)
 end
 
-# unused
 function fit_model_epochs!(
     options::FitOptions, edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer}, 
     ::Val{false};
@@ -159,15 +175,17 @@ function fit_model_epochs!(
     pars_ = InitFromParams(VarNamedTuple(; TN = options.init))
 
     # run the optimization
-    rs = midpoints(edges)
-    dc = IntegralArrays(options.order, options.ndt, length(rs), Val{length(options.init)}, 3)
-    model = modelsmcp!(dc, rs, edges, counts, options.mu, options.rho, options.locut, options.prior)
+    @assert !isnothing(options.diffcache) "Diffcache is not initialized"
+    model = modelsmcp!(options.diffcache, edges, counts,
+        options.mu, options.rho, options.locut, options.prior)
     logger = ConsoleLogger(stdout, Logging.Error)
     mle = with_logger(logger) do
         Turing.Optimisation.estimate_mode(
             model, MLE(), options.solver; initial_params=pars_, options.opt...
         )
     end
+    mldsmcp!(options.diffcache, options.mu, options.rho, mle.params[@varname(TN)])
+    map_fine_to_coarse!(options.diffcache, edges, eltype(mle.params[@varname(TN)]))
     return getFitResult(mle, options, edges, counts; stats)
 end
 
@@ -176,7 +194,7 @@ function getFitResult(mle, options::FitOptions, edges, counts; stats = true)
     lp = mle.lp
     
     if stats
-        hess = getHessian(mle)
+        hess = getHessian(edges, counts, options, para)
     else
         hess = nothing
     end
@@ -212,10 +230,18 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, edges, 
         vars_ = diag(covar)
         stderrors = sqrt.(vars_)
 
+        counts_ = copy(counts)
+        if !isnaive(options)
+            wn = integral_ws(edges, options.mu, para)
+            w = get_tmp(options.diffcache.wcoarse, eltype(para))
+            resid = (counts .- w) ./ sqrt.(w)
+            wn .= wn .+ resid .* sqrt.(wn)
+            counts_ .= round.(Int, max.(0, wn))
+        end
         # assuming uniform prior on N and T and separability of the likelihood
-        ci_low, ci_high, marglike, optflag = slice(para, eigen_problem.vectors, edges, counts, options)
+        ci_low, ci_high, marglike, optflag = slice(para, eigen_problem.vectors, edges, counts_, options)
         logevidence = lp + sum(log.(1.0 ./ (options.upp .- options.low))) + log(marglike)
-        if !optflag || isinf(logevidence)
+        if (!optflag && isnaive(options)) || isinf(logevidence)
             logevidence = -Inf
         end
     end
@@ -235,7 +261,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, edges, 
             optim_result,
             at_any_boundary = any(at_uboundary) || any(at_lboundary), 
             at_uboundary, at_lboundary,
-            options.low, options.upp, options.init,
+            low = copy(options.low), upp = copy(options.upp), init = copy(options.init),
             ci_low, ci_high,
             convex_opt, marglike, optflag,
             hess)
@@ -293,9 +319,9 @@ function sample_model_epochs!(
     logger = ConsoleLogger(stdout, Logging.Error)
     
     init_ = InitFromParams(VarNamedTuple(; TN = options.init))
-    rs = midpoints(edges)
-    dc = IntegralArrays(options.order, options.ndt, length(rs), Val{length(options.init)}, 3)
-    model = modelsmcp!(dc, rs, edges, counts, options.mu, options.rho, options.locut, options.prior)
+    @assert !isnothing(options.diffcache) "Diffcache is not initialized"
+    model = modelsmcp!(options.diffcache, edges, counts,
+        options.mu, options.rho, options.locut, options.prior)
     chain = with_logger(logger) do
         sample(model, MH(covar), nsamples; initial_params=init_)
     end
@@ -306,7 +332,7 @@ end
 
 function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
     edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer}, options::FitOptions;
-    ngrid = 5_000
+    ngrid = 250
 )
     ll_hat = llike(edges, counts, options.mu, options.locut, TN)
     ll_threshold = ll_hat - 2
@@ -315,10 +341,11 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
     offset_low  = zeros(length(TN))
     offset_high = zeros(length(TN))
     v = similar(TN)
+    dir = zeros(length(TN))
     global_lmax = maximum(options.upp .- options.low)
     lambdas = logrange(1/ngrid, global_lmax, ngrid)
     for i in 1:size(eigenvec, 2)
-        dir = view(eigenvec, :, i)
+        dir .= view(eigenvec, :, i)
         lambda_pos = global_lmax
         sum = eps()
         llp = ll_hat

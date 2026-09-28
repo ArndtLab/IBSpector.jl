@@ -51,29 +51,24 @@ function epochfinder!(init::Vector{T}, t, fop::FitOptions) where {T <: Number}
         insert!(init, 2split_epoch, newT2)
         insert!(init, 2split_epoch, newN)
     end
-    return init
+    return nothing
 end
 
-function perturb_fit!(f::FitResult, fop::FitOptions, h::Histogram;
-    by_pass::Bool = false
-)
+function perturb_fit!(f::FitResult, fop::FitOptions, h::Histogram)
     f_ = deepcopy(f)
     reset_perturb!(fop)
     set_perturb!(fop, f)
     if any(fop.perturb)
-        pinit = PInit(fop)
+        # pinit = PInit(fop)
         for fct in fop.delta.factors
             next!(fop.delta)
             setinit!(fop, f.para)
             set_perturb!(fop, f)
+            pinit = getPinit(fop)
             setinit!(fop, pinit)
             f = fit_model_epochs!(fop, h; stats = false)
-            if f.converged
-                if by_pass
-                    break
-                elseif !any(f.opt.at_lboundary[1:end-2])
-                    break
-                end
+            if f.converged && !any(f.opt.at_lboundary[1:end-2])
+                break
             end
         end
     end
@@ -84,7 +79,7 @@ function perturb_fit!(f::FitResult, fop::FitOptions, h::Histogram;
 end
 
 """
-    pre_fit!(fop::FitOptions, h::Histogram, nfits)
+    pre_fit!(fop::FitOptions, h::Histogram, nfits; getStats=true)
 
 Preliminarily fit `h` with an approximate model of piece-wise constant 
 epochs for each number of epochs from 1 to `nfits`.
@@ -95,14 +90,15 @@ epochs.
 Return a vector of `FitResult`, one for each number of epochs,
 see also [`FitResult`](@ref).
 """
-function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
+function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int;
+    getStats::Bool = true
 ) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
     fits = FitResult[]
     @assert nfits > 0 "number of fits has to be strictly positive"
     for i in 1:nfits
         setnepochs!(fop, i)
         if i == 1
-            f = fit_model_epochs!(fop, h)
+            f = fit_model_epochs!(fop, h; stats = getStats)
         else
             ts = timesplitter(h, get_para(fits[i-1]), fop)
             if iszero(ts)
@@ -139,12 +135,14 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int
             lps = map(f->f.lp, fs)
             f = fs[argmax(lps)]
             @debug "best " ts[argmax(lps)] f.lp f.converged
-            f = perturb_fit!(f, fop, h; by_pass=false)
-            p = 1 .+ (rand(length(f.para)) .- 0.5) * 0.001
-            setinit!(fop, get_para(f) .* p) # perturb slightly to avoid linesearch failure
-            f = fit_model_epochs!(fop, h)
+            f = perturb_fit!(f, fop, h)
+            if getStats
+                p = 1 .+ (rand(length(f.para)) .- 0.5) * 0.001
+                setinit!(fop, get_para(f) .* p) # perturb slightly to avoid linesearch failure
+                f = fit_model_epochs!(fop, h)
+            end
             if (f.lp < fits[i-1].lp) && f.converged
-                @error "epoch $i ll not improved. Please report an issue"
+                @error "epoch $i ll not improved. Please report an issue: $(f.lp) < $(fits[i-1].lp)"
             end
             @assert all(!isnan, f.para) """
                 NaN parameters $(f.para)
