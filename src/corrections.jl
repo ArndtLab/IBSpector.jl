@@ -6,56 +6,40 @@ end
     demoinfer(segments::AbstractVector{<:Integer}, epochrange::AbstractRange{<:Integer}, mu::Float64, rho::Float64; kwargs...)
 
 Make an histogram with IBS `segments` and infer demographic models with
-piece-wise constant epochs where the number of epochs is `epochrange`.
+piece-wise constant epochs where the number of epochs is in `epochrange`.
 
 Return a named tuple which contains the fields:
 - `fits`: a vector of `FitResult` (see [`FitResult`](@ref))
+- `h_obs`: the histogram of the observed segments.
+- `resid`: a vector of vectors of residuals, one for each model.
+- `p`: a vector of p-values for the autocorrelation of residuals, one for each model.
+  These are Ljung-Box tests, and might be affected by the number of bins included in
+  the fit relative to the estimated parameters. Additionally in the tail counts are low,
+  then a Poisson model implies that many (autocorrelated) zeros can be expected.
 - `chains`: a vector of vectors of `FitResult`, one for each iteration
-  of the correction procedure, and one chain per model
-- `yth`: a vector of vectors of the expected weights, one for each model
-  and one vector of expected weights per iteration of the correction procedure
+  of the correction procedure, and one chain per model. For diagnostics.
 - `corrections`: a vector of vectors of corrections, one for each iteration
   of the correction procedure, and one vector of corrections per model.
   Corrections are histogram counts, therefore they have the same shape.
-- `h_obs`: the histogram of the observed segments
-- `h_mods`: a vector of modified histograms, one for each model, with
-  higher order corrections applied.
-- `ybest`: a vector of expected weights corresponding 
-  to the best fit, one for each model
-- `resid`: a vector of vectors of residuals, one for each model
-- `p`: a vector of p-values for the autocorrelation of residuals, one for each model.
-  These are Ljung-Box tests, and might be affected by the numeber of bins included in
-  the fit realtive to the estimated parameters. Additionally in the tail counts are low,
-  then a Poisson model implies that many (autocorrelated) zeros can be expected.
-- `llbest`: a vector of the best log-likelihoods, one for each model
-- `deltas`: a vector of vectors of the maximum absolute difference between
-  corrections in consecutive iterations, and for each model.
+  For diagnostics.
 - `lls`: a vector of vectors of log-likelihoods, one for each iteration and
-  for each model. The output estimate is the one with the highest log-likelihood.
-- `conv`: a vector of booleans, one for each model, indicating whether the
-  maximum iterations were reached (false) or whether the procedure 
-  converged before (true).
-
+  for each model. For diagnostics.
+- `prefin`: a vector of `FitResult` for the pre-fit stage, one for each model.
+  For diagnostics.
+- `prefend`: a vector of `FitResult` for the pre-fit stage, one for each model,
+  after the last correction iteration. For diagnostics.
 
 # Optional Arguments
 - `fop::FitOptions = FitOptions(sum(segments), mu, rho)`: the fit options, see [`FitOptions`](@ref).
 - `lo::Int=1`: The lowest segment length to be considered in the histogram
 - `hi::Int=50_000_000`: The highest segment length to be considered in the histogram
-- `nbins::Int=fop.ndt`: The number of bins to use in the histogram
-- `iters::Int=20`: The number of iterations to perform after warmup. It might converge earlier.
-  Warmup iterations are proportional to the `rho`/`mu` ratio.
-- `reltol::Float64=1e-2`: The relative tolerance to use for convergence,
-  i.e. the maximum absolute difference between corrections in consecutive iterations.
-  The convergence condition test this or `relchange`.
-- `relchange::Float64=1e-4`: The relative change in parameters to use for convergence.
-  This is the maximum relative change in parameters between consecutive iterations.
-  The convergence condition test this or `reltol`.
-- `th_discr::Int=fop.ndt`: number of discrete points for numerical integration when
- computing the expected weights. Default is set automatically.
+- `nbins::Int=200`: The number of bins to use in the histogram.
+- `th_discr::Int=800`: number of discrete points for the numerical integration over the IBS length.
 """
-function demoinfer(segments::AbstractVector{<:Integer}, epochrange::AbstractRange{<:Integer}, mu::Float64, rho::Float64;
+function demoinfer(segments::AbstractVector{<:Integer}, epochrange::AbstractRange{<:Integer},
+    mu::Float64, rho::Float64;
     fop::FitOptions = FitOptions(sum(segments), length(segments), mu, rho),
-    lo::Int = 1, hi::Int = 50_000_000, nbins::Int = fop.ndt,
+    lo::Int = 1, hi::Int = 50_000_000, nbins::Int = 200,
     kwargs...
 )
     h = adapt_histogram(segments; lo, hi, nbins)
@@ -67,14 +51,14 @@ function demoinfer(segments::AbstractVector{<:Integer}, epochrange::AbstractRang
 end
 
 """
-    demoinfer(h::Histogram, epochrange, fop::FitOptions; iters=20, reltol=1e-2, relchange=1e-4)
-    demoinfer(h, epochs, fop; iters=20, reltol=1e-2, relchange=1e-4)
+    demoinfer(h::Histogram, epochrange, fop::FitOptions; th_discr=800, maxiters=6000, maxtime=7200)
+    demoinfer(h, epochs, fop; th_discr=800, maxiters=6000, maxtime=7200)
 
 Take an histogram of IBS segments, fit options, and infer demographic models with
-piece-wise constant epochs where the number of epochs is `epochrange`.
+piece-wise constant epochs where the number of epochs is in `epochrange` or `epochs`.
 Return a named tuple as above.
 
-If `epochrange` is a integer, then it fits only the model with that number of epochs.
+If `epochs` is passed (an integer), then it fits only the model with that number of epochs.
 In this case the returned named tuple contains only one element per field, instead of a vector.
 """
 function demoinfer(h_obs::Histogram{T,1,E}, epochrange::AbstractRange{<:Integer}, fop_::FitOptions;
@@ -87,74 +71,55 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochrange::AbstractRange{<:Integer}
     end
     return (;
         fits = map(r->r.f, results),
-        yth = map(r->r.yth, results),
+        prefin = map(r->r.prefin, results),
+        prefend = map(r->r.prefend, results),
         chains = map(r->r.chain, results),
         corrections = map(r->r.corrections, results),
         h_obs = results[1].h_obs,
-        h_mods = map(r->r.h_mod, results),
-        ybest = map(r->r.ybest, results),
         resid = map(r->r.resid, results),
         p = map(r->r.p, results),
-        llbest = map(r->r.llbest, results),
-        deltas = map(r->r.deltas, results),
-        lls = map(r->r.lls, results),
-        conv = map(r->r.conv, results)
+        lls = map(r->r.lls, results)
     )
 end
 
-function map_fine_to_coarse(wth_fine, fine_edges, coarse_edges)
-    wth = zeros(eltype(wth_fine), length(coarse_edges) - 1)
-    k = 1  # current coarse bin index
-    for j in eachindex(wth_fine)
-        a = fine_edges[j]
-        b = fine_edges[j + 1]
-        fine_width = b - a
-        # advance coarse pointer past bins that end before this fine bin starts
-        while k <= length(wth) && coarse_edges[k + 1] <= a
-            k += 1
-        end
-        # distribute weight to all coarse bins overlapping [a, b)
-        kk = k
-        while kk <= length(wth) && coarse_edges[kk] < b
-            overlap = min(b, coarse_edges[kk + 1]) - max(a, coarse_edges[kk])
-            wth[kk] += wth_fine[j] * overlap / fine_width
-            kk += 1
-        end
-    end
-    return wth
-end
-
 function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
-    iters::Int = 20, reltol::Float64 = 1e-2, relchange::Float64=1e-4,
-    th_discr::Int = fop_.ndt
+    th_discr::Int = 800, maxiters::Int = 6000, maxtime::Int = 7200
 ) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
     @assert !isempty(h_obs.weights) "histogram is empty"
-    @assert epochs > 0 "epochrange has to be strictly positive"
-    @assert iters > 0 "number of iterations has to be strictly positive"
-    @assert th_discr >= 1 "th_discr must be at least 1"
+    @assert epochs > 0 "epochs must be strictly positive"
+    @assert th_discr >= length(h_obs.weights) "th_discr must be at least the number of bins in the histogram"
     @assert fop_.locut < length(h_obs.weights) "locut must be less than the number of bins in the histogram"
-    if fop_.mu < fop_.rho
-        @warn "the method is currently designed for mu >= rho, results may be biased"
-    end
 
     h_mod = Histogram(h_obs.edges)
+    h_mod.weights .= h_obs.weights
 
     fop = deepcopy(fop_)
     lo_edge = h_obs.edges[1].edges[1]
     hi_edge = h_obs.edges[1].edges[end]
-    hth = CustomEdgeVector(; lo = lo_edge, hi = hi_edge - 1, nbins = th_discr)
-    rs_th = midpoints(hth)
-    bag = IntegralArrays(fop.order, fop.ndt, length(rs_th), Val{2epochs})
+    eth = CustomEdgeVector(; lo = lo_edge, hi = hi_edge - 1, nbins = th_discr)
+    rs = midpoints(eth)
+    bag = IntegralArrays(
+        timegrid(epochs; msub = fop.msub, nfin = fop.nfin, ntail = fop.ntail),
+        length(h_obs.weights),
+        rs,
+        eth,
+        Val{2epochs},
+        2,
+    )
+    fastbag = IntegralArrays(
+        timegrid(epochs; msub = fop.msub, nfin = 6, ntail = fop.ntail),
+        length(h_obs.weights),
+        midpoints(h_obs.edges[1]),
+        h_obs.edges[1],
+        Val{2epochs},
+        2,
+    )
 
     chain = []
     corrections = []
-    yths = []
-    deltas = [Inf]
     lls = []
 
-    h_mod.weights .= h_obs.weights
     corr = zeros(Float64, length(h_obs.weights))
-    conv = false
     warmup = 1
     for i in 100:-1:2
         nx = ramp(i, fop.mu, fop.rho)
@@ -163,8 +128,8 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
             break
         end
     end
-    for iter in 1:iters+warmup
-        fits = pre_fit!(fop, h_mod, epochs)
+    for iter in 1:warmup
+        fits = pre_fit!(fop, h_mod, epochs; getStats=false)
         f = fits[end]
         if f.nepochs != epochs
             push!(chain, f)
@@ -175,89 +140,104 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         push!(corrections, corr)
 
         rho = ramp(iter, fop.mu, fop.rho)
-        order_ = getorder(2e-5, fop.mu, rho)
-        mldsmcp!(bag, 1:order_, rs_th, hth, fop.mu, rho, init)
-        yth_fine = get_tmp(bag.ys, eltype(init))
-        wth_fine = yth_fine .* diff(hth)
-        wth = map_fine_to_coarse(wth_fine, hth, h_obs.edges[1])
-        yth = wth ./ diff(h_obs.edges[1])
+        mldsmcp!(bag, fop.mu, rho, init)
+        map_fine_to_coarse!(bag, h_obs.edges[1], eltype(init))
 
-        ll = llsmcp(wth, h_obs.weights, fop.locut)
+        w = get_tmp(bag.wcoarse, eltype(init))
+        ll = llsmcp(w, h_obs.weights, fop.locut)
         push!(lls, ll)
-        push!(yths, copy(yth))
 
         h_mod.weights .= h_obs.weights
 
-        weightsnaive = integral_ws(h_obs.edges[1], fop.mu, init)
-        corr = wth .- weightsnaive
-        corr[1:fop.locut-1] .= 0.
-        lim = findfirst(corr .> h_mod.weights)
-        if isnothing(lim)
-            lim = length(corr) + 1
-        end
-        corr[lim:end] .= 0.
-        temp = h_mod.weights .- corr
-        temp .= round.(Int, temp)
-        h_mod.weights .= max.(temp, 0)
-        @assert all(isfinite, h_mod.weights)
-        @assert all(!isnan, h_mod.weights)
-
-        if iter > warmup
-            deltaw = (yths[iter] .- yths[iter-1]) .* diff(h_obs.edges[1])
-            delta = maximum(abs.(deltaw))
-            deltapars = maximum(
-                abs.((get_para(chain[end]) .- get_para(chain[end-1])) ./ get_para(chain[end-1]))
-            )
-            push!(deltas, delta)
-            if delta < reltol || deltapars < relchange
-                conv = true
-                break
-            end
-        end
+        corr = correcthistogram!(h_mod.weights, h_obs.edges[1], fop.mu, fop.locut, w, init)
     end
 
-    best = argmax(lls[warmup:end]) + warmup - 1
-    ybest = yths[best]
-    f = chain[best]
-    ll = lls[best]
-    resid = compute_residuals(h_obs, ybest)
-    dof = length(get_para(f))
-    lag = max(10, length(resid) ÷ 8, dof+5)
-    p = pvalue(LjungBoxTest(resid[fop.locut:end], lag, dof))
+    setnaive!(fop, false)
+    fop.diffcache = fastbag
+    N0 = 1/(4*fop.mu*(fop.Ltot/sum(h_obs.weights)))
 
-    temp = h_obs.weights .- corrections[best]
-    temp .= round.(Int, temp)
-    h_mod.weights .= max.(temp, 0)
+    f = chain[1]
+    init = get_para(f)
+    regularizetn!(init, N0)
+    setinit!(fop, init)
+    setOptimOptions!(fop; maxiters=6000, maxtime=600)
+    prefin = fit_model_epochs!(fop, h_obs; stats=false)
+
+    f = chain[end]
+    init = get_para(f)
+    regularizetn!(init, N0)
+    setinit!(fop, init)
+    setOptimOptions!(fop; maxiters=6000, maxtime=600)
+    prefend = fit_model_epochs!(fop, h_obs; stats=false)
+
+    best = prefin.lp > prefend.lp ? prefin : prefend
+
+    setinit!(fop, best.para)
+    fop.diffcache = bag
+    setOptimOptions!(fop; maxiters, maxtime)
+    best = fit_model_epochs!(fop, h_obs)
+
+    resid = compute_residuals(h_obs, fop.mu, fop.rho, best.para; naive=false,
+        msub = fop.msub, nfin = fop.nfin, ntail = fop.ntail, finebins = th_discr
+    )
+    dof = length(get_para(f))
+    lag = max(10, length(resid) ÷ 5, dof+5)
+    ze = length(resid)
+    for j in fop.locut:length(resid)-1
+        if h_obs.weights[j] == 0
+            ze = j
+            break
+        end
+    end
+    p = pvalue(LjungBoxTest(resid[fop.locut:ze], lag, dof))
 
     (;
-        f,
+        f = best,
+        prefin,
+        prefend,
         chain,
-        yth = yths,
         corrections,
         h_obs,
-        h_mod,
-        ybest,
         resid,
         p,
-        llbest = ll,
-        deltas,
-        lls,
-        conv
+        lls
     )
 end
 
-function correctestimate!(fop::FitOptions, fit::FitResult, h::Histogram)
-    rs = midpoints(h.edges[1])
-    bag = IntegralArrays(fop.order, fop.ndt, length(rs), Val{length(fit.para)}, 3)
+function correcthistogram!(weights::AbstractVector{<:Real}, edges::AbstractVector{<:Real},
+    mu::Real, locut::Int, wth::AbstractVector{<:Real}, para::AbstractVector{<:Real}
+)
+    @assert length(wth) == length(weights)
+    weightsnaive = integral_ws(edges, mu, para)
+    corr = wth .- weightsnaive
+    corr[1:locut-1] .= 0.
+    lim = findfirst(corr .> weights)
+    if isnothing(lim)
+        lim = length(corr) + 1
+    end
+    corr[lim:end] .= 0.
+    temp = weights .- corr
+    temp .= round.(Int, temp)
+    weights .= max.(temp, 0)
+    @assert all(isfinite, weights)
+    @assert all(!isnan, weights)
+    return corr # just diagnostic, maybe drop
+end
 
-    setnepochs!(fop, length(fit.para)÷2)
-    setinit!(fop, fit.para)
-
-    he = ForwardDiff.hessian(
-        tn -> -llsmcp!(bag, rs, h.edges[1].edges, h.weights, fop.mu, fop.rho, fop.locut, tn),
-        get_para(fit)
-    )
-    return getFitResult(he, fit.para, fit.lp, fit.opt.optim_result, fop, h.edges[1], h.weights, true)
+function regularizetn!(para, N0; minrel = 0.1, maxrel = 10.0)
+    sumt = 0
+    for i in length(para):-2:4
+        if para[i] < minrel * N0
+            para[i] = minrel * N0
+        elseif para[i] > maxrel * N0
+            para[i] = maxrel * N0
+        end
+        if para[i-1] < minrel * sumt
+            para[i-1] = sumt
+        end
+        sumt += para[i-1]
+    end
+    return nothing
 end
 
 """
