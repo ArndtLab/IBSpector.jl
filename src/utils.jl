@@ -20,6 +20,7 @@ struct FitResult
     converged::Bool
     lp::Float64
     logevd::Float64
+    free::BitVector
     opt
 end
 
@@ -49,6 +50,15 @@ get_para(fit::FitResult) = copy(fit.para)
 Return the standard deviations of the parameters of the fit.
 """
 sds(fit::FitResult) = copy(fit.stderrors)
+
+"""
+    free(fit::FitResult)
+
+Return a `BitVector` flagging which parameters of the fit were actually
+estimated (`true`) versus held fixed (`false`), e.g. the `T`s when
+the fit was obtained with [`fitNs!`](@ref).
+"""
+free(fit::FitResult) = copy(fit.free)
 
 """
     evd(fit::FitResult)
@@ -223,6 +233,7 @@ mutable struct FitOptions
     force::Bool
     maxnts::Int
     naive::Bool
+    onlyN::Bool
     msub::Int
     nfin::Int
     ntail::Int
@@ -317,6 +328,7 @@ function FitOptions(Ltot, nhet, mu, rho;
         force,
         maxnts,
         naive,
+        false, # onlyN
         msub,
         nfin,
         ntail,
@@ -361,11 +373,18 @@ import .Spectra.SMCpIntegrals: TIMEGRID_DEFAULTS
     setinit!(fop::FitOptions, init::AbstractVector{<:Real})
 
 Set the initial vector of parameters for the optimization which takes the `FitOptions` object `fop`.
+
+Entries outside the prior support are truncated into it. When `fop` is set up
+for an N-only optimization (see [`isonlyN`](@ref), [`fitNs!`](@ref)) only the
+free entries are modified, see [`freemask`](@ref): the `T`s are held fixed by
+the fit, so they are kept exactly as requested.
 """
 function setinit!(fop::FitOptions, init::AbstractVector{<:Real})
     @assert length(init) == npar(fop) "Length of init vector must be equal to number of parameters"
     fop.init .= init
+    mask = freemask(fop)
     for i in eachindex(fop.init)
+        mask[i] || continue
         fop.init[i] <= fop.low[i] ? fop.init[i] = fop.low[i] * 1.001 : nothing
         fop.init[i] >= fop.upp[i] ? fop.init[i] = fop.upp[i] * 0.999 : nothing
     end
@@ -376,7 +395,13 @@ function setinit!(fop::FitOptions, init::AbstractVector{<:Real})
         for i in 3:2:length(fop.init)-1
             delta = fop.init[i] / 2fop.init[i+1] * frac
             if delta > delta_max
-                fop.init[i] = 2fop.init[i+1] * delta_max * 0.99 / frac
+                if mask[i]
+                    fop.init[i] = 2fop.init[i+1] * delta_max * 0.99 / frac
+                else
+                    # T is held fixed, enlarge the following N instead
+                    fop.init[i+1] = min(fop.init[i] * frac / (2delta_max * 0.99),
+                        fop.upp[i+1] * 0.999)
+                end
             end
         end
     end
@@ -489,6 +514,32 @@ end
 
 function setnaive!(fop::FitOptions, flag::Bool)
     fop.naive = flag
+end
+
+function isonlyN(fop::FitOptions)
+    return fop.onlyN
+end
+
+function setonlyN!(fop::FitOptions, flag::Bool)
+    fop.onlyN = flag
+end
+
+"""
+    freemask(fop::FitOptions)
+
+Return a `BitVector` of length `npar(fop)` flagging which entries of a `TN`
+vector are estimated by the fit. All of them, unless `fop` is set up for an
+N-only optimization (see [`isonlyN`](@ref), [`fitNs!`](@ref)): then only `L`
+(index 1) and the `N`s (even indices) are free, i.e. `[true, true, false, true, ...]`,
+while the `T`s (odd indices > 1) are held fixed.
+"""
+function freemask(fop::FitOptions)
+    n = npar(fop)
+    isonlyN(fop) || return trues(n)
+    mask = falses(n)
+    mask[1] = true
+    mask[2:2:end] .= true
+    return mask
 end
 
 """

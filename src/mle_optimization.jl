@@ -1,44 +1,64 @@
+# the Hessian is taken w.r.t. the free parameters only, see `freemask`
 function getHessian(edges::AbstractVector{<:Integer},
     counts::AbstractVector{<:Integer},
     options::FitOptions, TN::AbstractVector{<:Real}
 )
-    return getHessian(edges, counts, options, TN, Val(isnaive(options)))
+    return getHessian(edges, counts, options, TN, freemask(options), Val(isnaive(options)))
 end
 
 function getHessian(edges::AbstractVector{<:Integer},
     counts::AbstractVector{<:Integer},
-    options::FitOptions, TN::AbstractVector{<:Real}, ::Val{true}
+    options::FitOptions, TN::AbstractVector{<:Real}, mask::BitVector, ::Val{true}
 )
     # information matrix is the negative Hessian of the log-likelihood
     return ForwardDiff.hessian(
-        x -> -llike(edges, counts, options.mu, options.locut, x),
-        TN
+        x -> -llike(edges, counts, options.mu, options.locut, merge_free(TN, x, mask)),
+        TN[mask]
     )
 end
 
 function getHessian(edges::AbstractVector{<:Integer},
     counts::AbstractVector{<:Integer},
-    options::FitOptions, TN::AbstractVector{<:Real}, ::Val{false}
+    options::FitOptions, TN::AbstractVector{<:Real}, mask::BitVector, ::Val{false}
 )
     # information matrix is the negative Hessian of the log-likelihood
     return ForwardDiff.hessian(
         x -> -llsmcp!(options.diffcache, edges, counts,
-            options.mu, options.rho, options.locut, x),
-        TN
+            options.mu, options.rho, options.locut, merge_free(TN, x, mask)),
+        TN[mask]
     )
 end
 
+"""
+    merge_free(TNfixed::AbstractVector{<:Real}, x::AbstractVector{<:Real}, mask::BitVector)
+
+Splice the free parameters `x` into a copy of the full `TN` vector `TNfixed`
+at the positions flagged by `mask`, see [`freemask`](@ref). The other entries
+keep the values in `TNfixed`.
+"""
+function merge_free(TNfixed::AbstractVector{<:Real}, x::AbstractVector{T},
+    mask::BitVector
+) where {T<:Real}
+    TN = similar(TNfixed, T)
+    TN .= TNfixed
+    TN[mask] .= x
+    return TN
+end
+
 # models
+# `TN` holds only the free parameters, `TNdists` their priors,
+# the full vector `TNfull` is rebuilt with `merge_free`
 
 @model function model_epochs(edges::AbstractVector{<:Integer}, 
     counts::AbstractVector{<:Integer}, mu::Float64, locut::Int,
-    TNdists::Vector{<:Distribution}
+    TNdists::Vector{<:Distribution}, TNfixed::AbstractVector{<:Real}, mask::BitVector
 )
     TN ~ product_distribution(TNdists)
+    TNfull = merge_free(TNfixed, TN, mask)
     a = 0.5
-    last_hid_I = laplacekingmanint(edges[locut] - a, mu, TN)
+    last_hid_I = laplacekingmanint(edges[locut] - a, mu, TNfull)
     for i in locut:length(counts)
-        @inbounds this_hid_I = laplacekingmanint(edges[i+1] - a, mu, TN)
+        @inbounds this_hid_I = laplacekingmanint(edges[i+1] - a, mu, TNfull)
         m = this_hid_I - last_hid_I
         last_hid_I = this_hid_I
         if (m < 0) || isnan(m)
@@ -74,12 +94,14 @@ end
 
 @model function modelsmcp!(dc::IntegralArrays, edges::AbstractVector{<:Integer},
     counts::AbstractVector{<:Integer},
-    mu::Float64, rho::Float64, locut::Int, TNdists::Vector{<:Distribution}
+    mu::Float64, rho::Float64, locut::Int, TNdists::Vector{<:Distribution},
+    TNfixed::AbstractVector{<:Real}, mask::BitVector
 )
     TN ~ product_distribution(TNdists)
-    mldsmcp!(dc, mu, rho, TN)
-    map_fine_to_coarse!(dc, edges, eltype(TN))
-    m = get_tmp(dc.wcoarse, eltype(TN))
+    TNfull = merge_free(TNfixed, TN, mask)
+    mldsmcp!(dc, mu, rho, TNfull)
+    map_fine_to_coarse!(dc, edges, eltype(TNfull))
+    m = get_tmp(dc.wcoarse, eltype(TNfull))
     @assert length(m) == length(counts)
     for i in locut:length(counts)
         if (m[i] < 0) || isnan(m[i])
@@ -141,6 +163,24 @@ function fit_model_epochs!(options::FitOptions, h::Histogram{T,1,E};
 ) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
     @assert options.locut >= 1 "locut has to be at least 1"
     @assert options.locut <= length(h.weights) "locut cannot be greater than number of bins"
+    setonlyN!(options, false)
+    fit_model_epochs!(options, h.edges[1], h.weights, Val(isnaive(options)); stats)
+end
+
+"""
+    fitNs!(options::FitOptions, h::Histogram; stats = true)
+
+Like [`fit_model_epochs!`](@ref), but only estimates the total genome length
+`L` and the population sizes `N`, holding the epoch durations `T` fixed at
+the values in `options.init` (set via `initialize!` if not already provided).
+Set `options` for an N-only optimization, see [`freemask`](@ref), which
+persists on `options` until the next call to [`fit_model_epochs!`](@ref).
+"""
+function fitNs!(options::FitOptions, h::Histogram{T,1,E}; stats = true
+) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
+    @assert options.locut >= 1 "locut has to be at least 1"
+    @assert options.locut <= length(h.weights) "locut cannot be greater than number of bins"
+    setonlyN!(options, true)
     fit_model_epochs!(options, h.edges[1], h.weights, Val(isnaive(options)); stats)
 end
 
@@ -152,9 +192,11 @@ function fit_model_epochs!(
 )
     # get a good initial guess
     iszero(options.init) && initialize!(options, counts)
-    pars_ = InitFromParams(VarNamedTuple(; TN = options.init))
+    mask = freemask(options)
+    pars_ = InitFromParams(VarNamedTuple(; TN = options.init[mask]))
 
-    model = model_epochs(edges, counts, options.mu, options.locut, options.prior)
+    model = model_epochs(edges, counts, options.mu, options.locut,
+        options.prior[mask], options.init, mask)
     logger = ConsoleLogger(stdout, Logging.Error)
     mle = with_logger(logger) do
         Turing.Optimisation.estimate_mode(
@@ -172,25 +214,27 @@ function fit_model_epochs!(
 
     # get a good initial guess
     iszero(options.init) && initialize!(options, counts)
-    pars_ = InitFromParams(VarNamedTuple(; TN = options.init))
+    mask = freemask(options)
+    pars_ = InitFromParams(VarNamedTuple(; TN = options.init[mask]))
 
     # run the optimization
     @assert !isnothing(options.diffcache) "Diffcache is not initialized"
     model = modelsmcp!(options.diffcache, edges, counts,
-        options.mu, options.rho, options.locut, options.prior)
+        options.mu, options.rho, options.locut, options.prior[mask], options.init, mask)
     logger = ConsoleLogger(stdout, Logging.Error)
     mle = with_logger(logger) do
         Turing.Optimisation.estimate_mode(
             model, MLE(), options.solver; initial_params=pars_, options.opt...
         )
     end
-    mldsmcp!(options.diffcache, options.mu, options.rho, mle.params[@varname(TN)])
-    map_fine_to_coarse!(options.diffcache, edges, eltype(mle.params[@varname(TN)]))
+    para = merge_free(options.init, mle.params[@varname(TN)], mask)
+    mldsmcp!(options.diffcache, options.mu, options.rho, para)
+    map_fine_to_coarse!(options.diffcache, edges, eltype(para))
     return getFitResult(mle, options, edges, counts; stats)
 end
 
 function getFitResult(mle, options::FitOptions, edges, counts; stats = true)
-    para = mle.params[@varname(TN)]
+    para = merge_free(options.init, mle.params[@varname(TN)], freemask(options))
     lp = mle.lp
     
     if stats
@@ -210,11 +254,14 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, edges, 
         lambdas = nothing
     end
 
-    at_uboundary = map((x,u) -> (x>u/1.05), para, options.upp)
-    at_lboundary = map((l,x) -> (x<l*1.05), options.low, para)
-    stderrors = fill(Inf, length(para))
-    ci_low = fill(-Inf, length(para))
-    ci_high = fill(Inf, length(para))
+    # fixed parameters are never at the boundary, have zero stderror
+    # and a confidence interval collapsed to their value
+    mask = freemask(options)
+    at_uboundary = map((x,u) -> (x>u/1.05), para, options.upp) .& mask
+    at_lboundary = map((l,x) -> (x<l*1.05), options.low, para) .& mask
+    stderrors = ifelse.(mask, Inf, 0.0)
+    ci_low = ifelse.(mask, -Inf, para)
+    ci_high = ifelse.(mask, Inf, para)
     logevidence = -Inf
     marglike = 0
     convex_opt = false
@@ -228,7 +275,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, edges, 
         covar = eigen_problem.vectors *
             diagm(inv.(lambdas)) * eigen_problem.vectors'
         vars_ = diag(covar)
-        stderrors = sqrt.(vars_)
+        stderrors[mask] .= sqrt.(vars_)
 
         counts_ = copy(counts)
         if !isnaive(options)
@@ -240,7 +287,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, edges, 
         end
         # assuming uniform prior on N and T and separability of the likelihood
         ci_low, ci_high, marglike, optflag = slice(para, eigen_problem.vectors, edges, counts_, options)
-        logevidence = lp + sum(log.(1.0 ./ (options.upp .- options.low))) + log(marglike)
+        logevidence = lp + sum(log.(1.0 ./ (options.upp .- options.low))[mask]) + log(marglike)
         if (!optflag && isnaive(options)) || isinf(logevidence)
             logevidence = -Inf
         end
@@ -257,6 +304,7 @@ function getFitResult(hess, para, lp, optim_result, options::FitOptions, edges, 
         Turing.Optimisation.SciMLBase.successful_retcode(optim_result),
         lp,
         logevidence,
+        mask,
         (;
             optim_result,
             at_any_boundary = any(at_uboundary) || any(at_lboundary), 
@@ -288,6 +336,26 @@ function sample_model_epochs(options::FitOptions, h::Histogram{T,1,E},
     options_ = deepcopy(options)
     setnepochs!(options_, fit.nepochs)
     setnaive!(options_, naive)
+    setonlyN!(options_, false)
+    sample_model_epochs!(options_, fit, h.edges[1], h.weights, Val(isnaive(options_)); nsamples)
+end
+
+"""
+    sampleNs_posterior(options::FitOptions, h::Histogram{T,1,E}, fit::FitResult; nsamples = 10_000, naive = isnaive(options))
+
+Like [`sample_model_epochs`](@ref), but only samples from the posterior of
+the total genome length `L` and the population sizes `N`, holding the epoch
+durations `T` fixed at the values in `fit`, see [`fitNs!`](@ref) for the
+matching MLE optimization. The chain holds only the free parameters, in the
+order of [`freemask`](@ref).
+"""
+function sampleNs_posterior(options::FitOptions, h::Histogram{T,1,E},
+    fit::FitResult; nsamples::Int=10_000, naive = isnaive(options)
+) where {T<:Integer,E<:Tuple{AbstractVector{<:Integer}}}
+    options_ = deepcopy(options)
+    setnepochs!(options_, fit.nepochs)
+    setnaive!(options_, naive)
+    setonlyN!(options_, true)
     sample_model_epochs!(options_, fit, h.edges[1], h.weights, Val(isnaive(options_)); nsamples)
 end
 
@@ -297,11 +365,13 @@ function sample_model_epochs!(
     nsamples::Int=10_000
 )
     setinit!(options, get_para(fit))
+    mask = freemask(options)
 
-    model = model_epochs(edges, counts, options.mu, options.locut, options.prior)
+    model = model_epochs(edges, counts, options.mu, options.locut,
+        options.prior[mask], options.init, mask)
     logger = ConsoleLogger(stdout, Logging.Error)
     
-    init_ = InitFromParams(VarNamedTuple(; TN = options.init))
+    init_ = InitFromParams(VarNamedTuple(; TN = options.init[mask]))
     chain = with_logger(logger) do
         sample(model, NUTS(1000, 0.65; init_ϵ=0.1), nsamples; initial_params=init_)
     end
@@ -315,13 +385,14 @@ function sample_model_epochs!(
 )
     setinit!(options, get_para(fit))
     covar = get_covar(fit)
+    mask = freemask(options)
 
     logger = ConsoleLogger(stdout, Logging.Error)
     
-    init_ = InitFromParams(VarNamedTuple(; TN = options.init))
+    init_ = InitFromParams(VarNamedTuple(; TN = options.init[mask]))
     @assert !isnothing(options.diffcache) "Diffcache is not initialized"
     model = modelsmcp!(options.diffcache, edges, counts,
-        options.mu, options.rho, options.locut, options.prior)
+        options.mu, options.rho, options.locut, options.prior[mask], options.init, mask)
     chain = with_logger(logger) do
         sample(model, MH(covar), nsamples; initial_params=init_)
     end
@@ -329,6 +400,8 @@ function sample_model_epochs!(
 end
 
 # log-likelihood (and posterior) slices
+# `eigenvec` spans the free parameters only, see `freemask`,
+# the fixed ones are neither moved nor bounded
 
 function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
     edges::AbstractVector{<:Integer}, counts::AbstractVector{<:Integer}, options::FitOptions;
@@ -342,10 +415,13 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
     offset_high = zeros(length(TN))
     v = similar(TN)
     dir = zeros(length(TN))
-    global_lmax = maximum(options.upp .- options.low)
+    mask = freemask(options)
+    low = ifelse.(mask, options.low, -Inf)
+    upp = ifelse.(mask, options.upp, Inf)
+    global_lmax = maximum((options.upp .- options.low)[mask])
     lambdas = logrange(1/ngrid, global_lmax, ngrid)
     for i in 1:size(eigenvec, 2)
-        dir .= view(eigenvec, :, i)
+        dir[mask] .= view(eigenvec, :, i)
         lambda_pos = global_lmax
         sum = eps()
         llp = ll_hat
@@ -353,7 +429,7 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
         for j in 1:ngrid
             v .= TN .+ lambdas[j] * dir
             ll = llike(edges, counts, options.mu, options.locut,
-                clamp.(v, options.low, options.upp)
+                clamp.(v, low, upp)
             )
             if ll >= ll_threshold
                 lambda_pos = lambdas[j]
@@ -364,7 +440,7 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
             if j > 1
                 dx = lambdas[j] - lambdas[j-1]
             end
-            if all(v .> options.low) && all(v .< options.upp)
+            if all(v .> low) && all(v .< upp)
                 sum += (exp(ll - ll_hat) + exp(llp - ll_hat))/2 * dx
             end
             llp = ll
@@ -376,7 +452,7 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
         for j in 1:ngrid
             v .= TN .- lambdas[j] * dir
             ll = llike(edges, counts, options.mu, options.locut,
-                clamp.(v, options.low, options.upp)
+                clamp.(v, low, upp)
             )
             if ll >= ll_threshold
                 lambda_neg = lambdas[j]
@@ -387,7 +463,7 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
             if j > 1
                 dx = lambdas[j] - lambdas[j-1]
             end
-            if all(v .> options.low) && all(v .< options.upp)
+            if all(v .> low) && all(v .< upp)
                 sum += (exp(ll - ll_hat) + exp(llp - ll_hat))/2 * dx
             end
             llp = ll
@@ -409,7 +485,7 @@ function slice(TN::AbstractVector{<:Real}, eigenvec::AbstractMatrix{<:Real},
         end
     end
     # clamp final bounds to parameter space
-    q_low  = clamp.(TN .+ offset_low,  options.low, options.upp)
-    q_high = clamp.(TN .+ offset_high, options.low, options.upp)
+    q_low  = clamp.(TN .+ offset_low,  low, upp)
+    q_high = clamp.(TN .+ offset_high, low, upp)
     return q_low, q_high, marglike, optflag
 end

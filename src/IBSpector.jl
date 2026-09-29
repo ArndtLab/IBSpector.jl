@@ -27,7 +27,9 @@ export pre_fit!, demoinfer, compare_models, sample_model_epochs,
     laplacekingman, mldsmcp,
     extbps,
     lineages, cumulative_lineages, crediblehistory,
-    sampleN, quantilesN
+    sampleN, quantilesN,
+    fitNs!, sampleNs_posterior, free,
+    refine_model!
 
 
 function integral_ws(edges::AbstractVector{<:Real}, mu::Float64, TN::Vector)

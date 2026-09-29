@@ -1,7 +1,8 @@
 using IBSpector
 using IBSpector: npar, setinit!, initialize!, fit_model_epochs!, #PInit, 
     setnepochs!, timesplitter, integral_ws, next!,
-    reset_perturb!, perturb_fit!, residstructure, compute_residuals
+    reset_perturb!, perturb_fit!, residstructure, compute_residuals,
+    isonlyN, setonlyN!, freemask, midlineagetime, epochfinder!
 using PopSim
 using HistogramBinnings
 using Distributions
@@ -98,11 +99,130 @@ end
     fit_model_epochs!(fop, h)
 end
 
+function smcp_diffcache(fop, h)
+    lo_edge, hi_edge = h.edges[1][1], h.edges[1][end]
+    eth = IBSpector.CustomEdgeVector(; lo = lo_edge, hi = hi_edge - 1,
+                                       nbins = length(h.weights))
+    return IntegralArrays(
+        timegrid(fop.nepochs; msub = fop.msub, nfin = fop.nfin, ntail = fop.ntail),
+        length(h.weights), midpoints(eth), eth, Val{npar(fop)}, 2,
+    )
+end
+
+@testset "Test fitNs! / sampleNs_posterior (N-only)" begin
+    h = Histogram([1,2,3,4])
+    append!(h, [1,1,1,2,3,1,2])
+    fop = FitOptions(11, 7, 1.0, 1.0; msub = 6, nfin = 4, ntail = 8, locut = 1, nepochs = 2)
+    @test !isonlyN(fop)
+    @test freemask(fop) == trues(4)
+    initialize!(fop, h.weights)
+
+    f = fitNs!(fop, h)
+    @test isonlyN(fop)
+    mask = freemask(fop)
+    @test mask == Bool[1, 1, 0, 1]
+    @test f.free == mask
+    @test free(f) == mask
+    @test f.para[3] == fop.init[3] # T fixed
+    @test f.stderrors[3] == 0.0
+    @test f.opt.ci_low[3] == f.opt.ci_high[3] == f.para[3]
+    @test size(f.opt.hess) == (3, 3)
+
+    chain = sampleNs_posterior(fop, h, f; nsamples = 10)
+    @test size(chain, 1) == 10
+
+    # naive == false (SMC') path
+    fop2 = FitOptions(11, 7, 1.0, 1.0; msub = 6, nfin = 4, ntail = 8, locut = 1, nepochs = 2)
+    initialize!(fop2, h.weights)
+    IBSpector.setnaive!(fop2, false)
+    IBSpector.setOptimOptions!(fop2, g_tol=1e-3)
+    fop2.diffcache = smcp_diffcache(fop2, h)
+    f2 = fitNs!(fop2, h)
+    @test f2.free == freemask(fop2)
+    @test f2.para[3] == fop2.init[3]
+    @test size(f2.opt.hess) == (3, 3)
+
+    # regression: default (onlyN = false) TN-mode behavior is unaffected
+    fop3 = FitOptions(11, 7, 1.0, 1.0; locut = 1)
+    @test !isonlyN(fop3)
+    f3 = fit_model_epochs!(fop3, h)
+    @test all(f3.free)
+    @test size(f3.opt.hess) == (2, 2)
+end
+
+@testset "Test setinit! with onlyN" begin
+    fop = FitOptions(11, 7, 1.0, 1.0; nepochs = 3)
+    # L below its lower bound, T1 below Tlow, N1 above Nupp
+    TN = [5.0, 5.0, 5.0, 1e9, 20.0, 1000.0]
+
+    setinit!(fop, TN)
+    @test !isonlyN(fop)
+    @test fop.init[1] > TN[1] # L truncated
+    @test fop.init[3] > TN[3] # T1 truncated
+    @test fop.init[5] == TN[5]
+    @test all(fop.low .<= fop.init .<= fop.upp)
+
+    setonlyN!(fop, true)
+    setinit!(fop, TN)
+    @test fop.init[1] > TN[1] # L is free, truncated
+    @test fop.init[3] == TN[3] # Ts kept
+    @test fop.init[5] == TN[5]
+    @test fop.low[2] < fop.init[2] < fop.upp[2]
+    @test fop.low[4] < fop.init[4] < fop.upp[4]
+    @test fop.init[6] == TN[6]
+
+    # the onlyN flag is reset by the full TN entry points
+    h = Histogram([1,2,3,4])
+    append!(h, [1,1,1,2,3,1,2])
+    fop2 = FitOptions(11, 7, 1.0, 1.0; nepochs = 2)
+    initialize!(fop2, h.weights)
+    fitNs!(fop2, h; stats = false)
+    @test isonlyN(fop2)
+    fit_model_epochs!(fop2, h; stats = false)
+    @test !isonlyN(fop2)
+end
+
+@testset "Test epochfinder! with onlyN" begin
+    # a split of the oldest epoch, less than 1000 generations above its lower
+    # boundary: the new duration is floored when the Ts are fitted, kept as is
+    # when only the Ns are
+    old = [3e9, 10000.0, 5000.0, 20000.0]
+    t = 5500.0
+
+    fop = FitOptions(3e9, 10, 1.0, 1.0; nepochs = 3)
+    init = copy(old)
+    epochfinder!(init, t, fop)
+    @test length(init) == npar(fop)
+    @test init[3] == 1000
+    @test Spectra.getts(init, 3) == 6000
+
+    setonlyN!(fop, true)
+    init = copy(old)
+    epochfinder!(init, t, fop)
+    @test init[3] == t - 5000
+    @test Spectra.getts(init, 3) == t
+    @test init[4] == old[2] # the split epoch keeps its size
+    @test init[[1,2,5,6]] == old
+end
+
+@testset "Test midlineagetime" begin
+    TN = [3e9, 10000.0]
+    rho = 1e-8
+    tmax = 1e9
+    t = midlineagetime(0, tmax, TN, rho)
+    @test 0 < t < tmax
+    half = cumulative_lineages(tmax, TN, rho) / 2
+    @test cumulative_lineages(t, TN, rho) ≈ half rtol=0.05
+    # degenerate intervals resolve no split
+    @test midlineagetime(0, 0, TN, rho) == 0
+    @test midlineagetime(100, 50, TN, rho) == 0
+end
+
 @testset "Compare models" begin
-    m1 = FitResult(1,0,0,0,[],[],"",false,-1e4,-1e4,nothing)
-    m2 = FitResult(2,0,0,0,[],[],"",true,-1e3,-1e3,nothing)
-    m3 = FitResult(3,0,0,0,[],[],"",true,-1e2,-1e2,nothing)
-    m4 = FitResult(4,0,0,0,[],[],"",true,-1e1,-1e1,nothing)
+    m1 = FitResult(1,0,0,0,[],[],"",false,-1e4,-1e4,trues(0),nothing)
+    m2 = FitResult(2,0,0,0,[],[],"",true,-1e3,-1e3,trues(0),nothing)
+    m3 = FitResult(3,0,0,0,[],[],"",true,-1e2,-1e2,trues(0),nothing)
+    m4 = FitResult(4,0,0,0,[],[],"",true,-1e1,-1e1,trues(0),nothing)
     flags = [true,true,true,false]
     b = compare_models([m1, m2, m3, m4], flags)
     @test !isnothing(b)
@@ -176,6 +296,41 @@ end
     append!(h2, ibs2)
     resid2 = compute_residuals(h, h2)
     @test !any(isnan.(resid2))
+end
+
+@testset "Test refine_model!" begin
+    mu, rho, TN = mus[1], rhos[1], TNs[2]
+
+    ibs_segments = get_sim(TN, mu, rho)
+    h = adapt_histogram(ibs_segments; nbins = 200)
+    fop = FitOptions(sum(ibs_segments), length(ibs_segments), mu, rho)
+
+    # seed with a cheap two epochs model
+    fits = pre_fit!(fop, h, 2)
+    seed = get_para(fits[end])
+    nepochs0 = length(seed) ÷ 2
+
+    fits = refine_model!(fop, h, seed)
+    @test fits isa Vector{FitResult}
+    @test 1 < length(fits) <= nepochs0 + 1
+    neps = [f.nepochs for f in fits]
+    # ordered from the most to the least complex model, the input being the last
+    @test all(diff(neps) .== -1)
+    @test neps[1] <= 2nepochs0
+    @test neps[end] == nepochs0
+    # each model nests the following one
+    @test fits[1].lp >= fits[end].lp
+    for f in fits
+        # L and the Ns are estimated, the Ts are held fixed at the proposal
+        @test f.free[1]
+        @test f.free[2:2:end] == trues(f.nepochs)
+        @test f.free[3:2:end] == falses(f.nepochs - 1)
+        @test f.para[3:2:end-1] == f.opt.init[3:2:end-1]
+        @test !isnothing(f.opt.hess)
+        @test !isnothing(flags(f))
+    end
+    @test fop.nepochs == fits[end].nepochs
+    @test isonlyN(fop)
 end
 
 if LOCAL
