@@ -376,7 +376,7 @@ function setinit!(fop::FitOptions, init::AbstractVector{<:Real})
         for i in 3:2:length(fop.init)-1
             delta = fop.init[i] / 2fop.init[i+1] * frac
             if delta > delta_max
-                fop.init[i] = 2fop.init[i+1] * delta_max * 0.99 / frac
+                fop.init[i+1] = fop.init[i] / (2 * delta_max) * frac
             end
         end
     end
