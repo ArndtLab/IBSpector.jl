@@ -142,7 +142,7 @@ function pre_fit!(fop::FitOptions, h::Histogram{T,1,E}, nfits::Int;
                 f = fit_model_epochs!(fop, h)
             end
             if (f.lp < fits[i-1].lp) && f.converged
-                @error "epoch $i ll not improved. Please report an issue: $(f.lp) < $(fits[i-1].lp)"
+                @warn "epoch $i ll not improved. new is $(f.lp) < $(fits[i-1].lp)"
             end
             @assert all(!isnan, f.para) """
                 NaN parameters $(f.para)

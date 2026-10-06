@@ -135,21 +135,21 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
             push!(chain, f)
             break
         end
-        init = get_para(f)
+        setinit!(fop, f.para)
         push!(chain, f)
         push!(corrections, corr)
 
         rho = ramp(iter, fop.mu, fop.rho)
-        mldsmcp!(bag, fop.mu, rho, init)
-        map_fine_to_coarse!(bag, h_obs.edges[1], eltype(init))
+        mldsmcp!(bag, fop.mu, rho, fop.init)
+        map_fine_to_coarse!(bag, h_obs.edges[1], eltype(fop.init))
 
-        w = get_tmp(bag.wcoarse, eltype(init))
+        w = get_tmp(bag.wcoarse, eltype(fop.init))
         ll = llsmcp(w, h_obs.weights, fop.locut)
         push!(lls, ll)
 
         h_mod.weights .= h_obs.weights
 
-        corr = correcthistogram!(h_mod.weights, h_obs.edges[1], fop.mu, fop.locut, w, init)
+        corr = correcthistogram!(h_mod.weights, h_obs.edges[1], fop.mu, fop.locut, w, fop.init)
     end
 
     setnaive!(fop, false)
@@ -160,14 +160,14 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
     init = get_para(f)
     regularizetn!(init, N0)
     setinit!(fop, init)
-    setOptimOptions!(fop; maxiters=6000, maxtime=600)
+    setOptimOptions!(fop; maxiters=6000, maxtime=1800)
     prefin = fit_model_epochs!(fop, h_obs; stats=false)
 
     f = chain[end]
     init = get_para(f)
     regularizetn!(init, N0)
     setinit!(fop, init)
-    setOptimOptions!(fop; maxiters=6000, maxtime=600)
+    setOptimOptions!(fop; maxiters=6000, maxtime=1800)
     prefend = fit_model_epochs!(fop, h_obs; stats=false)
 
     best = prefin.lp > prefend.lp ? prefin : prefend
@@ -181,7 +181,6 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
         msub = fop.msub, nfin = fop.nfin, ntail = fop.ntail, finebins = th_discr
     )
     dof = length(get_para(f))
-    lag = max(10, length(resid) ÷ 5, dof+5)
     ze = length(resid)
     for j in fop.locut:length(resid)-1
         if h_obs.weights[j] == 0
@@ -189,6 +188,7 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
             break
         end
     end
+    lag = max(10, length(resid[fop.locut:ze]) ÷ 5, dof+5)
     p = pvalue(LjungBoxTest(resid[fop.locut:ze], lag, dof))
 
     (;
