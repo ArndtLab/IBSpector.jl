@@ -160,6 +160,30 @@ end
     chain = sample_model_epochs(fop, h, best; nsamples = 10)
     fl = flags(best)
 
+    # sparse histogram: an early empty bin truncates the residuals entering the
+    # Ljung-Box test to fewer than the requested lags
+    hs = adapt_histogram(ibs_segments; nbins = 30)
+    hs.weights[3:2:end] .= 0
+    res = demoinfer(hs, 1:1, fop; th_discr = 30, maxiters = 100, maxtime = 10)
+    @test 0 <= only(res.p) <= 1
+
+    # long epoch with small N: the warmup of demoinfer evaluates the smcp
+    # branch at the naive pre-fit, which must not produce NaN weights
+    fopw = FitOptions(sum(ibs_segments), length(ibs_segments), mu, rho; msub=6, nfin=4, ntail=8)
+    setnepochs!(fopw, 2)
+    setinit!(fopw, [sum(ibs_segments), 1e4, 1e6, 20]; smcp = true)
+    eth = IBSpector.CustomEdgeVector(; lo = h.edges[1][1], hi = h.edges[1][end] - 1,
+                                       nbins = length(h.weights))
+    bagw = IntegralArrays(timegrid(2; msub = fopw.msub, nfin = fopw.nfin, ntail = fopw.ntail),
+        length(h.weights), midpoints(eth), eth, Val{4}, 2)
+    IBSpector.mldsmcp!(bagw, mu, rho, fopw.init)
+    IBSpector.map_fine_to_coarse!(bagw, h.edges[1], eltype(fopw.init))
+    w = IBSpector.get_tmp(bagw.wcoarse, eltype(fopw.init))
+    @test all(isfinite, w)
+    ws = copy(h.weights)
+    IBSpector.correcthistogram!(ws, h.edges[1], mu, fopw.locut, w, fopw.init)
+    @test all(>=(0), ws)
+
     resid = compute_residuals(h, mu, rho, TN)
     @test !any(isnan.(resid))
     resid = compute_residuals(h, mu, rho, TN; naive=false)

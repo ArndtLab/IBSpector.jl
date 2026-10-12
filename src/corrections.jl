@@ -135,7 +135,7 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
             push!(chain, f)
             break
         end
-        setinit!(fop, f.para)
+        setinit!(fop, f.para; smcp = true)
         push!(chain, f)
         push!(corrections, corr)
 
@@ -188,8 +188,10 @@ function demoinfer(h_obs::Histogram{T,1,E}, epochs::Int, fop_::FitOptions;
             break
         end
     end
-    lag = max(10, length(resid[fop.locut:ze]) ÷ 5, dof+5)
-    p = pvalue(LjungBoxTest(resid[fop.locut:ze], lag, dof))
+    y = resid[fop.locut:ze]
+    # LjungBoxTest needs dof < lag < length(y): sparse histograms can leave too few bins
+    lag = min(max(10, length(y) ÷ 5, dof+5), length(y) - 1)
+    p = lag > dof ? pvalue(LjungBoxTest(y, lag, dof)) : 1.0
 
     (;
         f = best,

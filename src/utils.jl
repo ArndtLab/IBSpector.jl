@@ -358,18 +358,20 @@ end
 import .Spectra.SMCpIntegrals: TIMEGRID_DEFAULTS
 
 """
-    setinit!(fop::FitOptions, init::AbstractVector{<:Real})
+    setinit!(fop::FitOptions, init::AbstractVector{<:Real}; smcp = !isnaive(fop))
 
 Set the initial vector of parameters for the optimization which takes the `FitOptions` object `fop`.
+If `smcp` is true, epochs too long relative to their population size for the SMC' time
+quadrature are made numerically safe by raising the population size.
 """
-function setinit!(fop::FitOptions, init::AbstractVector{<:Real})
+function setinit!(fop::FitOptions, init::AbstractVector{<:Real}; smcp::Bool = !isnaive(fop))
     @assert length(init) == npar(fop) "Length of init vector must be equal to number of parameters"
     fop.init .= init
     for i in eachindex(fop.init)
         fop.init[i] <= fop.low[i] ? fop.init[i] = fop.low[i] * 1.001 : nothing
         fop.init[i] >= fop.upp[i] ? fop.init[i] = fop.upp[i] * 0.999 : nothing
     end
-    if !isnaive(fop)
+    if smcp
         fmin = TIMEGRID_DEFAULTS.fmin
         delta_max = 17
         frac = (1 − fmin^(1/fop.nfin))

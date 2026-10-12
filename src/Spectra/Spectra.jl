@@ -15,7 +15,7 @@ export
 	mldsmcp, mldsmcp!, fusedsweep!, IntegralArrays, getnpicard, TimeGrid, timegrid, ndt, npanels,
 	extbps,
     lineages, cumulative_lineages, crediblehistory,
-    sampleN, quantilesN,
+    sampleN, quantilesN, lin2N,
 	map_fine_to_coarse, map_fine_to_coarse!
 
 """
