@@ -6,7 +6,7 @@ export getts, getns,
     Nt, cumcr,
     coalescent, extbps,
     lineages, cumulative_lineages, crediblehistory,
-    sampleN, quantilesN
+    sampleN, quantilesN, lin2N
 
 
 function getts(TN::AbstractVector{T}, i::Int) where T
@@ -157,14 +157,29 @@ function cumulative_lineages(t::Real, TN::AbstractVector{<:Real}, rho::Real; k::
     return s * 2 * TN[1] * rho
 end
 
+"""
+    lin2N(t::AbstractVector{<:Real}, TN::AbstractVector{<:Real}, rho::Real)
+    lin2N(t::AbstractVector{<:Real}, lint::AbstractVector{<:Real}, rho::Real, L::Real)
+
+Compute the expected number of coalescence events at each generation in `t` given the
+demographic scenario encoded in `TN` and the recombination rate `rho`. Output the
+effective population size (half inverse coalescence rate) induced by coalescence events.
+
+It can take directly a vector of expected coalescence events `lint` instead of `TN`
+and the total number of basepairs `L`.
+"""
 function lin2N(t::AbstractVector{<:Real}, TN::AbstractVector{<:Real}, rho::Real)
     lint = lineages(t, TN, rho)
+    return lin2N(t, lint, rho, TN[1])
+end
+
+function lin2N(t::AbstractVector{<:Real}, lint::AbstractVector{<:Real}, rho::Real, L::Real)
     int = 0.
     N = zeros(length(t))
     for i in eachindex(t)
         l = lint[i]
         int += l / 2t[i]
-        N[i] = t[i] * (TN[1] * rho - int) / max(l, eps())
+        N[i] = t[i] * (L * rho - int) / max(l, eps())
     end
     return N
 end
